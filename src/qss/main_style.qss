@@ -1,0 +1,139 @@
+QMainWindow {
+    background-color: #1a1a1a;
+    color: white;
+}
+
+/* === FRAME STYLES === */
+QFrame[class="app-frames"]{
+    border: 1px solid #555;
+    padding: 5px;
+    border-radius: 10px;
+}
+
+/* Left Frame (File Selection, Key Entry, Buttons) */
+#gui_frame {
+    border: 1px solid #555;
+}
+
+
+QLineEdit{
+    background : #3B3B3B;
+    color : white;
+    padding : 5px;
+    border-radius : 10px;
+}
+
+QWidget {
+    background-color: #1a1a1a;
+    color: #eee;
+}
+
+#key_entry {
+    background : #3B3B3B;
+    color : white;
+    padding : 7px;
+    font-size : 16px;
+    border-radius : 15px;
+}
+
+/* Style for QPushButton */
+QPushButton[class="gui-buttons"] {
+    background-color: transparent;
+    border: 2px solid #555;
+    color: white;
+    padding: 7px;
+    font-size: 15px;
+    font-weight: bold;
+    border-radius: 18px;
+}
+
+/* Hover effect */
+QPushButton:hover[class="gui-buttons"]{
+    background-color: #4CAF50;
+    border: 2px solid #4CAF55;
+    color: black;
+}
+
+/* Click (pressed) effect */
+QPushButton:pressed[class="gui-buttons"]{
+    background-color: #367B39;
+}
+
+QRadioButton:hover[class="rsa-radio-btn"]{
+    background-color: #4CAF50;
+    border: 2px solid #004213;
+    color: black;
+    padding : 0px;
+    margin : 0px;
+    border-radius : 10px
+}
+
+QRadioButton:checked[class="rsa-radio-btn"]{
+    background-color : #4CAF50;
+    border: 2px solid #4CAF50;
+    color : black;
+    padding : 0px;
+    margin : 0px;
+    border-radius : 10px
+}
+
+QRadioButton:pressed[class="rsa-radio-btn"]{
+    background-color: #367B39;
+}
+
+QRadioButton[class="rsa-radio-btn"]{
+    background-color : #1a1a1a;
+    color : white;
+    font-size : 13px;
+    padding : 2px;
+    margin : 0px;
+    border-radius : 10px
+}
+
+QLabel[class="info-labels"]{
+    background-color : #1a1a1a;
+    color : white;
+    padding : 0px;
+    margin : 0px;
+    font-size : 14px;
+    max-height : 30px;
+}
+
+.note-label {
+    background-color : #1a1a1a;
+    color : yellow;
+    padding : 0px;
+    margin : 0px;
+    font-size : 14px;
+    max-height : 40px;
+}
+
+.header {
+    color : white;
+    font-size : 18px;
+    font-weight: bold;
+    margin : 0px;
+    padding : 0px;
+    max-height : 30px;
+}
+
+#rsa-radio-layout {
+    background-color: #1a1a1a;
+    padding : 2px;
+}
+
+QScrollArea {
+    margin : 0px;
+}
+
+QPushButton:disabled {
+    background-color: #7a7a7a;
+}
+
+/* QScrollArea * QScrollBar:vertical {
+    background-color : #1a1a1a;
+    border-color: black;
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 15px;
+}

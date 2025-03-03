@@ -1,0 +1,8 @@
+CHUNK_SIZE=1024*1024 # 1 MB
+RSA_KEY_SIZE = 4096
+SWAP_COUNT = 512
+MATRIX_SIZE = 1024
+CMD_HISTORY_LIMIT = 100
+MIN_KEY_LEN = 4
+ASCII_FILE = "./terminal_texts/ascii_enigmatrix.txt"
+CONFIG_FILE = "./config.json"

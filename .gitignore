@@ -1,0 +1,5 @@
+Demo/
+encvenv/
+.idea/
+__pycache__/
+config.json
