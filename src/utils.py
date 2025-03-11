@@ -42,6 +42,12 @@ def get_rsa_files():
         return []
     return [f for f in os.listdir(rsa_dir) if f.endswith(".pem")]
 
+def get_default_core_count():
+    """Determines the optimal number of threads for benchmarking."""
+    total_cores = os.cpu_count() or 2
+    default_cores = max(2, total_cores // 2)
+    return default_cores
+
 def load_command_history():
     """Loads command history from config.json."""
     config = load_config()
@@ -83,6 +89,7 @@ def check_encrypted(file_path):
             return first_byte in {b"\x00", b"\x01"}  # Enigmatrix header
     except: # Empty file, corrupted unreadable file
         return False
+
 def estimate_encrypted_size(size_in_bytes):
     """
     Estimates the size of the encrypted file by rounding up to the next whole MB.
@@ -195,3 +202,9 @@ def generate_tree(directory, prefix="", depth=3, current_level=0):
         else:
             tree_lines.append(f"{prefix}{connector}📄 {safe_entry}")
     return tree_lines
+
+def del_file(fpath):
+    try:
+        os.remove(fpath)
+    except FileNotFoundError:
+        pass

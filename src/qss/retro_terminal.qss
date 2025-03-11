@@ -3,7 +3,6 @@
     color: #00FF00;
     font-family: "Courier New", consolas;
     font-size: 15px;
-    border: none;
     border-radius: 10px;
     selection-background-color: #0000F0;
     selection-color: white;

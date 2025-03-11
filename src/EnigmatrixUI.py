@@ -3,9 +3,9 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout,
     QFrame, QLabel, QLineEdit, QFileDialog, QWidget, QTextEdit, QInputDialog,
-    QMessageBox, QButtonGroup, QRadioButton, QScrollArea,QGridLayout
+    QMessageBox, QButtonGroup, QRadioButton, QScrollArea, QGridLayout
 )
-from PyQt6.QtGui import QIcon, QTextCursor
+from PyQt6.QtGui import QIcon, QTextCursor, QKeySequence
 from PyQt6.QtCore import Qt, QTimer
 import key_utils
 from utils import (
@@ -17,6 +17,8 @@ import utils
 import encryptor
 from command_handler import execute_command
 from cfg import *
+
+
 
 class RetroTerminal(QTextEdit):
     def __init__(self, parent=None,app=None):
@@ -38,12 +40,14 @@ class RetroTerminal(QTextEdit):
         self.timer.timeout.connect(self._add_next_character)
         # Variables
         self.cwd = os.getcwd()
+        self.is_dragging = False
         # Load stylesheet
         self.load_stylesheet("./qss/retro_terminal.qss")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.createContextMenu)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.update_protected_region()
 
     def exec_pending(self):
         callback,args,msg = self.pending_command
@@ -68,6 +72,10 @@ class RetroTerminal(QTextEdit):
         if not confirm:
             self.type_text("Operation cancelled.")
 
+    def update_protected_region(self):
+        """Updates the protected region to ensure past outputs are not editable."""
+        self.protected_region_end = self.document().characterCount()
+
     def createContextMenu(self, position):
         menu = self.createStandardContextMenu()
         # Find and remove Cut & Paste actions
@@ -83,9 +91,29 @@ class RetroTerminal(QTextEdit):
             return
         cursor = self.textCursor()
         last_prompt_index = self.toPlainText().rfind(self.prompt) + len(self.prompt)
-        if event.key() in (Qt.Key.Key_Z, Qt.Key.Key_Y, Qt.Key.Key_A) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+
+        ctrl_flag = event.key() == Qt.Key.Key_Control
+        cpy_flag = False
+        if cursor.position() < self.protected_region_end - 1:
+            if event.matches(QKeySequence.StandardKey.Copy) or event.key() == Qt.Key.Key_Control:
+                cpy_flag = True
+            else:
+                self.moveCursor(QTextCursor.MoveOperation.End)
+                return
+
+        if cursor.hasSelection():
+            if not (cpy_flag or ctrl_flag):
+                selection_start = cursor.selectionStart()
+                selection_end = cursor.selectionEnd()
+                if selection_start < self.protected_region_end - 1:
+                    self.moveCursor(QTextCursor.MoveOperation.End)
+                    return
+                else:
+                    pass
+
+        if event.key() in (Qt.Key.Key_Z, Qt.Key.Key_Y, Qt.Key.Key_A, Qt.Key.Key_X) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             return
-            # Prevent moving left beyond prompt
+        # Prevent moving left beyond prompt
         if event.key() == Qt.Key.Key_Left:
             if cursor.positionInBlock() <= len(self.prompt)-1:  # If before prompt, do nothing
                 return
@@ -103,27 +131,49 @@ class RetroTerminal(QTextEdit):
         elif event.key() == Qt.Key.Key_PageDown:
             return
         elif event.key() == Qt.Key.Key_Home:
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)  # Move to start of line
-            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, len(self.prompt)-1)
+            move_mode = QTextCursor.MoveMode.KeepAnchor if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else QTextCursor.MoveMode.MoveAnchor
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, move_mode)
+            cursor.movePosition(QTextCursor.MoveOperation.Right, move_mode, len(self.prompt) - 1)
             self.setTextCursor(cursor)
             return
+
         # Allow Enter to process command
         elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.process_command()
             self.moveCursor(QTextCursor.MoveOperation.End)
             self.history_index = len(self.command_history)
             return
-        # Prevent deleting prompt characters
+
+        # Prevent deleting text in the protected region
         elif event.key() == Qt.Key.Key_Backspace:
             if cursor.hasSelection():
                 selection_start = cursor.selectionStart()
                 selection_end = cursor.selectionEnd()
-                # Allow deletion if the entire selection is AFTER the prompt
-                if selection_start >= last_prompt_index:
-                    cursor.removeSelectedText()
+                # Disallow deleting any selection that includes protected text
+                if selection_start < self.protected_region_end-1:
+                    self.moveCursor(QTextCursor.MoveOperation.End)
                     return
-            if cursor.positionInBlock() <= len(self.prompt)-1:
+                else:
+                    pass
+            # If cursor is in the protected region, prevent deletion
+            elif cursor.position() < self.protected_region_end:
+                self.moveCursor(QTextCursor.MoveOperation.End)
                 return
+
+        # Prevent deleting protected text using the Delete key
+        elif event.key() == Qt.Key.Key_Delete:
+            if cursor.hasSelection():
+                selection_start = cursor.selectionStart()
+                selection_end = cursor.selectionEnd()
+                if selection_start < self.protected_region_end-1:
+                    self.moveCursor(QTextCursor.MoveOperation.End)
+                    return
+                else:
+                    pass
+            elif cursor.position() < self.protected_region_end-1:
+                self.moveCursor(QTextCursor.MoveOperation.End)
+                return
+
         # Call parent method for other keys
         super().keyPressEvent(event)
 
@@ -146,6 +196,7 @@ class RetroTerminal(QTextEdit):
                     self.command_history.append(last_command)
             execute_command(last_command,self.app)
         self.append(self.prompt)
+        self.update_protected_region()
 
     def show_previous_command(self):
         """Displays the previous command from history when Up Arrow is pressed."""
@@ -176,22 +227,30 @@ class RetroTerminal(QTextEdit):
         # Select everything after the prompt and remove it
         cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
         cursor.removeSelectedText()
-        # Insert new command from history
         cursor.insertText(command)
-        # Move cursor to the end of the inserted command
         self.setTextCursor(cursor)
 
     def mousePressEvent(self, event):
-        """Prevents user from setting the cursor position with the mouse."""
-        return  # Ignore mouse press events
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.is_dragging = False
+            cursor = self.cursorForPosition(event.pos())
+            if cursor.hasSelection():
+                self.is_dragging = True
+            else:
+                self.setTextCursor(cursor)
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Prevents cursor from moving via mouse dragging."""
-        return  # Ignore mouse movement
+        if event.buttons() == Qt.MouseButton.LeftButton and self.is_dragging:
+            event.ignore()
+        else:
+            super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event):
-        """Prevents cursor from changing position after mouse release."""
-        return  # Ignore mouse release events
+    def dragEnterEvent(self, event):
+        event.ignore()  # Ignore drag event
+
+    def dropEvent(self, event):
+        event.ignore()  # Ignore drop event completely
 
     def type_text(self,text,add_prompt=False):
         full_text = f"\n{text}"
@@ -201,6 +260,7 @@ class RetroTerminal(QTextEdit):
         self.current_text += full_text
         self.setText(self.current_text)
         self.moveCursor(QTextCursor.MoveOperation.End)
+        QApplication.processEvents()
 
     def type_effect(self, text: str, typing_speed = 40, clear_before_typing: bool = False):
         """Simulates typing effect over a fixed speed."""
@@ -229,6 +289,7 @@ class RetroTerminal(QTextEdit):
         else:
             self.setReadOnly(False)
             self.timer.stop()  # Stop typing effect
+            self.update_protected_region()
 
     def load_stylesheet(self, file_name):
         """Loads a QSS stylesheet from an external file."""
@@ -259,7 +320,7 @@ class EnigmatrixApp(QMainWindow):
         self.output_path = None
 
         # Set window icon
-        self.icon_path = "../assets/Enigmatrix.jpg"
+        self.icon_path = "./assets/Enigmatrix.ico"
         self.setWindowIcon(QIcon(self.icon_path))
 
         # Apply external QSS stylesheet
@@ -278,7 +339,6 @@ class EnigmatrixApp(QMainWindow):
         # === Main Layout ===
         self.main_layout = QHBoxLayout()
 
-        # === Left Frame (File Selection, Key Entry, Buttons) ===
         self.gui_frame = QFrame()
         self.gui_frame.setProperty("class","app-frames")
         self.gui_frame.setObjectName("gui_frame")  # Assign ID for styling
@@ -356,16 +416,14 @@ class EnigmatrixApp(QMainWindow):
         self.btn_grid.addWidget(self.decrypt_btn,2,1)
         self.btn_grid.addWidget(self.reset_btn,3,0,1,2)
 
-
         self.gui_layout.addLayout(self.rsa_list_layout,Qt.AlignmentFlag.AlignTop)
         self.gui_layout.addLayout(self.info_layout, Qt.AlignmentFlag.AlignTop)
         self.gui_layout.addWidget(self.key_entry)
         self.gui_layout.addLayout(self.btn_grid)
 
-        # === Right Frame (File Info Display) ===
         self.terminal_frame = QFrame()
         self.terminal_frame.setProperty("class","app-frames")
-        self.terminal_frame.setObjectName("terminal_frame")  # Assign ID for styling
+        self.terminal_frame.setObjectName("terminal_frame")
 
         self.terminal_layout = QVBoxLayout(self.terminal_frame)
         self.terminal_layout.setContentsMargins(0,0,0,0)
@@ -398,14 +456,14 @@ class EnigmatrixApp(QMainWindow):
         elif window=="normal":
             if self.windowState() == Qt.WindowState.WindowFullScreen:
                 self.showMaximized()
-            self.setMinimumSize(1100, 800)
-            self.resize(1100,800)
+            self.setMinimumSize(*NORMAL_WINDOW_SIZE)
+            self.resize(*NORMAL_WINDOW_SIZE)
             self.showNormal()
         elif window=="small":
             if self.windowState() == Qt.WindowState.WindowFullScreen:
                 self.showMaximized()
-            self.setMinimumSize(1100,700)
-            self.resize(1100,700)
+            self.setMinimumSize(*SMALL_WINDOW_SIZE)
+            self.resize(*SMALL_WINDOW_SIZE)
             self.showNormal()
 
         if ui=="terminal":
@@ -418,7 +476,7 @@ class EnigmatrixApp(QMainWindow):
             "rsa_directory" : None,
             "preferences" : {
                 "window_mode" : "normal",
-                "ui_mode" : "gui"
+                "ui_mode" : "gui",
             },
             "command_history" :[]
         }

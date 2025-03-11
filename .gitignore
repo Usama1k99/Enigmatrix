@@ -2,4 +2,7 @@ Demo/
 encvenv/
 .idea/
 __pycache__/
+src/dist/
+src/build/
+src/Enigmatrix.spec
 config.json

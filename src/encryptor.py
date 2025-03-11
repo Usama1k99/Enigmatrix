@@ -15,6 +15,7 @@ PERMUTATION_ORDER = ["row", "column"]
 
 def encrypt_file(input_path, output_path, raw_key, public_key=None):
     """Encrypts a file using multi-threading for faster processing."""
+    cores = utils.get_default_core_count()
     # Key Expansion
     primary_hash = key_utils.primary_hash(raw_key)
     seed1, seed2 = key_utils.extract_prng_seeds(primary_hash)
@@ -49,7 +50,7 @@ def encrypt_file(input_path, output_path, raw_key, public_key=None):
         del chunk_matrix, subkey_matrix
         return result
     # Read, Encrypt, and Write in Parallel
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=cores) as executor:
         future_to_chunk = {executor.submit(process_chunk, i, chunk): i for i, chunk in enumerate(utils.read_file_in_chunks(input_path))}
         results = {}  # Dictionary to store chunks that finish early
         next_index = 0  # Tracks the next chunk to write
@@ -65,6 +66,7 @@ def encrypt_file(input_path, output_path, raw_key, public_key=None):
 
 def decrypt_file(input_path, output_path, raw_key=None, private_key=None):
     """Decrypts a file encrypted with Kryptigma's encryption algorithm using parallel processing."""
+    cores = utils.get_default_core_count()
     # Overwrite output file if it exists
     with open(output_path, "wb") as f:
         pass
@@ -118,7 +120,7 @@ def decrypt_file(input_path, output_path, raw_key=None, private_key=None):
         del chunk_matrix, subkey_matrix
         return chunk
     # Parallel Processing: Decrypt Chunks
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=cores) as executor:
         future_to_chunk = {executor.submit(process_chunk, i, chunk): i for i, chunk in enumerate(encrypted_chunks)}
         results = {}  # Store decrypted chunks that finish early
         next_index = 0  # Tracks the next chunk to write

@@ -1,9 +1,14 @@
-import os.path
+import os
+import sys
+import time
+import ctypes
+import psutil
 import shlex
 import utils
 import key_utils
 import encryptor
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication
 from command_configs import *
 from cfg import *
 
@@ -11,20 +16,20 @@ from cfg import *
 def safe_eval(expr):
     """Evaluates a mathematical expression safely with arithmetic & bitwise operations."""
     tree = ast.parse(expr, mode='eval')  # Parse expression safely
-    return _eval_node(tree.body)  # Evaluate the parsed tree
+    return eval_node(tree.body)  # Evaluate the parsed tree
 
-def _eval_node(node):
+def eval_node(node):
     """Recursively evaluates AST nodes."""
     if isinstance(node, ast.Num):
         return node.n
     elif isinstance(node, ast.BinOp):
         op_type = type(node.op)
         if op_type in SAFE_OPERATORS:
-            return SAFE_OPERATORS[op_type](_eval_node(node.left), _eval_node(node.right))
+            return SAFE_OPERATORS[op_type](eval_node(node.left), eval_node(node.right))
     elif isinstance(node, ast.UnaryOp):
         op_type = type(node.op)
         if op_type in SAFE_OPERATORS:
-            return SAFE_OPERATORS[op_type](_eval_node(node.operand))
+            return SAFE_OPERATORS[op_type](eval_node(node.operand))
     raise ValueError("Invalid operation")
 
 def command(name=None, aliases=None):
@@ -45,11 +50,11 @@ def command(name=None, aliases=None):
 def execute_command(input_text, app):
     """Parses user input and executes the corresponding function."""
     command, args, kwargs = parse_command(input_text)
-    command = command.lower()
+    cmdl = command.lower()
     terminal = app.retro_terminal
     if terminal.awaiting_response:
-        if command.startswith("y") or command.startswith("n"):
-            if command.startswith("y"):
+        if cmdl.startswith("y") or cmdl.startswith("n"):
+            if cmdl.startswith("y"):
                 return terminal.exec_pending()
             else:
                 return terminal.confirmed(False)
@@ -63,14 +68,16 @@ def execute_command(input_text, app):
     except :
         pass
     # Handling commands which require full text
-    if command in ["echo","print","say"]:
-        text = input_text[len(command):].strip()
+    if cmdl in ["echo", "print", "say"]:
+        text = input_text[len(cmdl):].strip()
         return app.retro_terminal.type_text(text)
     if input_text.startswith("#"):
         return
     kwargs = utils.normalize_kwargs(kwargs)
-    if command in COMMANDS:
-        COMMANDS[command](app, *args, **kwargs)
+    if cmdl in COMMANDS:
+        app.retro_terminal.setReadOnly(True)
+        COMMANDS[cmdl](app, *args, **kwargs)
+        app.retro_terminal.setReadOnly(False)
     else:
         app.retro_terminal.type_text(f"Unknown command : \"{command}\"")
 
@@ -97,11 +104,11 @@ def parse_command(command: str):
 
 # =========================== Commands =========================== #
 @command(name="help", aliases=["h"])
-def show_help(app, topic=None):
+def show_help(app, topic=None,*args,**kwargs):
     """Displays help information for commands and categories."""
     help_text = "Available command categories:\n"
     for category in COMMAND_CATEGORIES:
-        help_text += f"- {category.capitalize()}\n"
+        help_text += f"> {category.capitalize()}\n"
     help_text += 'Use "help <category>" to list commands, or "help <command>" for command details.'
     # If no topic is given, show general help
     if not topic:
@@ -115,7 +122,9 @@ def show_help(app, topic=None):
         return app.retro_terminal.type_text(f"{_topic}: {COMMAND_DESCRIPTIONS[topic]}")
     # Check if topic is a category
     if topic in COMMAND_CATEGORIES:
-        commands = ", ".join(COMMAND_CATEGORIES[topic])
+        commands = ""
+        for cmd in COMMAND_CATEGORIES[topic]:
+            commands += f"> {cmd}\n"
         return app.retro_terminal.type_text(f"{topic.capitalize()} commands:\n{commands}")
     return app.retro_terminal.type_text(help_text)
 
@@ -277,7 +286,6 @@ def change_cwd(app,path=None,*args,**kwargs):
         return app.retro_terminal.type_text("Usage: cd <path>")
     full_path = os.path.abspath(os.path.join(app.retro_terminal.cwd,path))
     if os.path.isdir(full_path):
-        os.chdir(full_path)
         app.retro_terminal.cwd = full_path
         return app.retro_terminal.type_text(f"Changed directory to: \"{full_path}\"")
     else:
@@ -356,15 +364,15 @@ def set_mode(app, *args, **kwargs):
                 app.retro_terminal.type_text("Switching to normal window mode")
                 if app.windowState() == Qt.WindowState.WindowFullScreen:
                     app.showMaximized()
-                app.setMinimumSize(1100,800)
-                app.resize(1100,800)
+                app.setMinimumSize(*NORMAL_WINDOW_SIZE)
+                app.resize(*NORMAL_WINDOW_SIZE)
                 app.showNormal()
             elif window_mode == "small":
                 app.retro_terminal.type_text("Switching to small window mode")
                 if app.windowState() == Qt.WindowState.WindowFullScreen:
                     app.showMaximized()
-                app.setMinimumSize(1100,700)
-                app.resize(1100,700)
+                app.setMinimumSize(*SMALL_WINDOW_SIZE)
+                app.resize(*SMALL_WINDOW_SIZE)
                 app.showNormal()
             if ui_mode == "terminal":
                 app.retro_terminal.type_text("Showing full terminal")
@@ -428,16 +436,24 @@ def rsa_key_handle(app, *args, **kwargs):
             else:
                 app.retro_terminal.type_text("Select an RSA directory first.")
 
-@command(name="exit", aliases=["close"])
-def exit_app(app, *args, **kwargs):
-    app.close()
-
 @command(name="set-preference",aliases=["preference","prefer"])
 def set_preference(app,window_mode=None,ui_mode=None,*args,**kwargs):
     config = utils.load_config()
+    pref = config.get("preferences")
+    default = kwargs.get("default")
+    if default:
+        ui = "gui"
+        window = "normal"
+        app.retro_terminal.type_text(f"Setting window preference as '{window}'")
+        app.retro_terminal.type_text(f"Setting ui preference as '{ui}'")
+        pref['window_mode'] = window
+        pref['ui_mode'] = ui
+        config['preferences'] = pref
+        utils.dump_config(config)
+        app.init_preferences()
+        return app.retro_terminal.type_text("Successfully saved preferences to default.")
     w_modes = ["fullscreen","maximize","normal","small"]
     u_modes = ["terminal","gui"]
-    pref = config.get("preferences")
     change_flag = False
     if not (window_mode or ui_mode):
         if kwargs:
@@ -455,8 +471,8 @@ def set_preference(app,window_mode=None,ui_mode=None,*args,**kwargs):
                     app.retro_terminal.type_text(f"Setting window preference as '{window}'")
                 if u_condition:
                     ui = ui.lower()
-                    app.retro_terminal.type_text(f"Setting ui preference as '{ui}'")
                     pref['ui_mode'] = ui
+                    app.retro_terminal.type_text(f"Setting ui preference as '{ui}'")
                 config['preferences'] = pref
                 utils.dump_config(config)
                 app.init_preferences()
@@ -468,7 +484,7 @@ def set_preference(app,window_mode=None,ui_mode=None,*args,**kwargs):
         ui_mode = ui_mode.lower() if ui_mode else ui_mode
         w_condition = window_mode in w_modes
         u_condition = ui_mode in u_modes
-        if not (w_condition and u_condition):
+        if not (w_condition or u_condition):
             return show_help(app,'preference')
         if w_condition:
             pref['window_mode'] = window_mode
@@ -480,3 +496,74 @@ def set_preference(app,window_mode=None,ui_mode=None,*args,**kwargs):
         utils.dump_config(config)
         app.init_preferences()
         return app.retro_terminal.type_text("Successfully saved preferences.")
+
+@command(name="benchmark", aliases=["benchm", "bmark", "bm"])
+def benchmark(app, *args, **kwargs):
+    """Runs an encryption benchmark using the specified number of cores."""
+    # === Step 1: Determine Number of Cores ===
+    num_cores = utils.get_default_core_count()
+    app.retro_terminal.type_text(f"Running benchmark with {num_cores} cores...")
+    # === Step 2: Generate 100MB Test File ===
+    test_file = os.path.abspath("./assets/benchmark_testfile.bin")
+    output_file = os.path.abspath("./assets/benchmark_output.enc")
+    if not os.path.exists(test_file):
+        app.retro_terminal.type_text("Generating 100MB test file...")
+        with open(test_file, "wb") as f:
+            f.write(os.urandom(100 * 1024 * 1024))  # 100MB of random data
+    app.retro_terminal.type_text(f"Starting encryption process...")
+    # === Step 3: Measure Encryption Time ===
+    start_time = time.time()
+    key = "testing@123".encode()
+    encryptor.encrypt_file(test_file,output_file,key)
+    end_time = time.time()
+    time_taken = end_time - start_time
+    app.retro_terminal.type_text(f"Benchmark completed!")
+    app.retro_terminal.type_text(f"Encryption Time: {time_taken:.4f} seconds")
+    # Cleanup
+    utils.del_file(test_file)
+    utils.del_file(output_file)
+    app.retro_terminal.type_text("Benchmark files cleaned up.")
+
+@command(name="info",aliases=["showinfo","getinfo"])
+def show_info(app,*args,**kwargs):
+    cores = kwargs.get("cores") or kwargs.get("core") or kwargs.get("cpus") or kwargs.get("cpu") or kwargs.get("c")
+    version = kwargs.get("version") or kwargs.get("ver") or kwargs.get("v")
+    if not (cores or version):
+        return show_help(app,'info')
+    if cores:
+        c_count = utils.get_default_core_count()
+        app.retro_terminal.type_text(f"Enigmatrix encryption/decryption will use ({c_count}) cores of your cpu.")
+    if version:
+        app.retro_terminal.type_text(f"Current Enigmatrix version is : {VERSION}")
+
+
+@command(name="run-as-admin", aliases=["admin", "sudo"])
+def restart_with_admin(app, *args, **kwargs):
+    """Restarts Enigmatrix with admin privileges."""
+    script = sys.executable  # Path to the current Python interpreter or .exe
+    params = " ".join(sys.argv)  # Preserve CLI args
+    working_dir = app.retro_terminal.cwd  # Get the directory of the script
+    if os.name == "nt":  # Windows
+        if ctypes.windll.shell32.IsUserAnAdmin():
+            app.retro_terminal.type_text("Already running as admin!")
+            return
+        # Relaunch with admin privileges
+        response = ctypes.windll.shell32.ShellExecuteW(None, "runas", script, params, working_dir, 0)
+        if response > 32:
+            app.retro_terminal.type_text("Restarting Enigmatrix with admin privileges...")
+            time.sleep(2)
+            sys.exit()  # Exit the non-admin instance
+        else:
+            app.retro_terminal.type_text("Failed to restart with admin privileges!")
+    else:  # Linux/macOS
+        if os.geteuid() == 0:
+            app.retro_terminal.type_text("Already running as root!")
+            return
+        # Relaunch with sudo, ensuring the correct working directory
+        os.chdir(working_dir)
+        os.execvp("sudo", ["sudo", script] + sys.argv)
+        sys.exit()  # Exit the current process
+
+@command(name="exit", aliases=["close"])
+def exit_app(app, *args, **kwargs):
+    app.close()

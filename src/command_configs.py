@@ -6,14 +6,15 @@ COMMAND_ALIASES = {}
 
 COMMAND_CATEGORIES = {
     "encryption": ["encrypt", "decrypt"],
-    "general": ["cd", "cwd", "tree", "clear", "exit"],
-    "utility": ["mode", "set-preference", 'rsa'],
-    "misc": ['ascii-art']
+    "general": ["run-as-admin", "cd", "cwd", "tree", "info", "clear", "exit"],
+    "utility": ["mode", "set-preference", 'rsa', 'benchmark'],
+    "misc": ['ascii-art',"echo",'#']
 }
 
 COMMAND_DESCRIPTIONS = {
     "clear": "Clears the terminal screen.",
     "exit": "Exits Enigmatrix.",
+    "run-as-admin" : ("Relaunches Enigmatrix with admin privileges."),
     "ascii-art": ("Displays the \"Enigmatrix\" ASCII art on the screen\n"
                   "--clear -> Clears the screen and then displays the ASCII art of \"Enigmatrix\"."),
     "encrypt": ("Encrypts a file. \nUsage: encrypt <input_path> <output_path> <key> [rsa_file_path]\n"
@@ -62,7 +63,23 @@ COMMAND_DESCRIPTIONS = {
                         "--window small\n\n"
                         "Example usage: \n"
                         "set-preference --ui terminal --window fullscreen\n"
-                        "Changes preference to full terminal and fullscreen mode everytime you launch Enigmatrix.")
+                        "Changes preference to full terminal and fullscreen mode everytime you launch Enigmatrix.\n\n"
+                        "Note: using --default will change preferences to app's default settings."),
+    "benchmark" : ("Measures encryption performance by testing encryption speed on a 100MB file.\n"
+                   "Runs a performance benchmark to evaluate Enigmatrix's encryption speed. \n"
+                   "The benchmark encrypts a 100MB test file and measures the total time taken.\n"
+                   "This helps users understand the expected encryption speed on their system.\n"
+                   "The benchmark automatically uses an optimized number of CPU cores (total // 2)\n"
+                   "to ensure balanced performance.\n"
+                   "Notes: \n"
+                   "    - The test file is automatically generated and deleted after benchmarking.\n"
+                   "    - This command does not affect any user files."),
+    "info" : ("Displays Enigmatrix configuration info, including CPU cores used and current version.\n"
+              "--cores   -> shows the number of cores used by encryption/decryption process\n"
+              "--version -> shows the current version of Enigmatrix."),
+    "echo" : ("Simply prints the given text to terminal.\n"
+              "try: echo Hello, World!"),
+    "#" : ("Use as a comment (does absolutely nothing)")
 }
 
 # Allowed operators

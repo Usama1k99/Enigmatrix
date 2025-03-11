@@ -13,14 +13,18 @@ QFrame[class="app-frames"]{
 /* Left Frame (File Selection, Key Entry, Buttons) */
 #gui_frame {
     border: 1px solid #555;
+    max-width : 500px;
 }
-
 
 QLineEdit{
     background : #3B3B3B;
     color : white;
     padding : 5px;
     border-radius : 10px;
+}
+
+QLineEdit:focus{
+    border: 1px solid #4f93d6;
 }
 
 QWidget {
@@ -33,6 +37,15 @@ QWidget {
     color : white;
     padding : 7px;
     font-size : 16px;
+    border-radius : 15px;
+}
+
+#key_entry:focus {
+    background : #3B3B3B;
+    color : white;
+    padding : 5px;
+    font-size : 16px;
+    border: 2px solid #00FF00;
     border-radius : 15px;
 }
 
