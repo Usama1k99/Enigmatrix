@@ -19,6 +19,12 @@ def dump_config(obj):
     with open(CONFIG_FILE,"w") as f:
         json.dump(obj,f,indent=4)
 
+def estimate_encryption_time(file_size, bm_time, overhead_factor=0.127):
+    """Estimates encryption time with overhead adjustment."""
+    file_size_mb = file_size / (1024 * 1024)
+    estimated_time = (file_size_mb / 100) * bm_time * (1 + overhead_factor)
+    return round(estimated_time, 3)
+
 def normalize_kwargs(kwargs):
     """Converts all keys in the kwargs dictionary to lowercase."""
     return {key.lower(): value for key, value in kwargs.items()}

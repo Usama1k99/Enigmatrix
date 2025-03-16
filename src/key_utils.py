@@ -34,7 +34,7 @@ def detect_rsa_key(file_path):
                 return "public"
     except :
         return None
-    return None  # Return None if it's not a valid RSA key
+    return None
 
 def rsa_encrypt_key(raw_key, public_key):
     """Encrypts the raw key using RSA public key."""
@@ -48,7 +48,6 @@ def rsa_decrypt_key(encrypted_key, private_key):
     decrypted_key = cipher.decrypt(encrypted_key)
     return decrypted_key
 
-
 def load_rsa_key(file_path):
     """Loads an RSA key from a file."""
     with open(file_path, "rb") as f:
@@ -57,7 +56,6 @@ def load_rsa_key(file_path):
 
 def primary_hash(raw_key):
     return hashlib.sha512(raw_key).digest()
-
 
 def key_expansion_stream(primary_hash, raw_key, num_chunks):
     """Yields one 1MB subkey at a time instead of storing all at once."""

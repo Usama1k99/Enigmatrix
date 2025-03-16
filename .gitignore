@@ -4,5 +4,5 @@ encvenv/
 __pycache__/
 src/dist/
 src/build/
+src/config.json
 src/Enigmatrix.spec
-config.json

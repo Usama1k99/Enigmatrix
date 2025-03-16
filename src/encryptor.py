@@ -197,14 +197,3 @@ def determine_sub_operations(seed2):
     random.shuffle(mod_order)
     random.shuffle(permutation_order)
     return row_swaps, col_swaps, permutation_order, mod_order
-
-if __name__ == '__main__':
-    import time
-    t1 = time.time()
-    encrypt_file("../Demo/Original/Need For Speed  Heat.mp4","../Demo/Encrypted/nfsh.enc","testing the thing".encode())
-    t2 = time.time()
-    print(f"enc: {t2 - t1:.6f} seconds")
-    t2 = time.time()
-    decrypt_file("../Demo/Encrypted/nfsh.enc","../Demo/Decrypted/nfsh.dec",raw_key="testing the thing".encode())
-    t3 = time.time()
-    print(f"dec: {t3-t2:.6f} seconds")

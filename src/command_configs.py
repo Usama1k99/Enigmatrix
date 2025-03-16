@@ -6,7 +6,7 @@ COMMAND_ALIASES = {}
 
 COMMAND_CATEGORIES = {
     "encryption": ["encrypt", "decrypt"],
-    "general": ["run-as-admin", "cd", "cwd", "tree", "info", "clear", "exit"],
+    "general": ["run-as-admin", "cd", "cwd", "tree", "info", "aliases", "clear", "exit"],
     "utility": ["mode", "set-preference", 'rsa', 'benchmark'],
     "misc": ['ascii-art',"echo",'#']
 }
@@ -15,6 +15,7 @@ COMMAND_DESCRIPTIONS = {
     "clear": "Clears the terminal screen.",
     "exit": "Exits Enigmatrix.",
     "run-as-admin" : ("Relaunches Enigmatrix with admin privileges."),
+    "aliases" : ("Shows all the aliases for the given command name"),
     "ascii-art": ("Displays the \"Enigmatrix\" ASCII art on the screen\n"
                   "--clear -> Clears the screen and then displays the ASCII art of \"Enigmatrix\"."),
     "encrypt": ("Encrypts a file. \nUsage: encrypt <input_path> <output_path> <key> [rsa_file_path]\n"
@@ -27,7 +28,14 @@ COMMAND_DESCRIPTIONS = {
                 "Legend:\n"
                 "<> -> Required\n"
                 "[] -> Optional / Conditional"),
-    "tree": "Displays directory structure.",
+    "tree": ("Displays directory structure.\n"
+             "--depth -> set depth of the tree.\n"
+             "Usage:\n"
+             "tree [\"path/to/directory\"] --depth [number]\n"
+             "Notes:\n"
+             "- Both the path and depth options are optional\n"
+             "- Default path is current working directory (use cwd to know)\n"
+             "- Default depth of a tree is 3"),
     "cd": "Changes the current working directory.",
     "cwd": "Displays the current working directory.",
     "rsa-key" : ("Operations related to RSA key\n\n"
@@ -78,7 +86,11 @@ COMMAND_DESCRIPTIONS = {
               "--cores   -> shows the number of cores used by encryption/decryption process\n"
               "--version -> shows the current version of Enigmatrix."),
     "echo" : ("Simply prints the given text to terminal.\n"
-              "try: echo Hello, World!"),
+              "try \"echo Hello, World!\""),
+    "print" : ("Simply prints the given text to terminal.\n"
+              "try \"print Hello, World!\""),
+    "say" : ("Simply prints the given text to terminal.\n"
+              "try \"say Hello, World!\""),
     "#" : ("Use as a comment (does absolutely nothing)")
 }
 

@@ -10,7 +10,6 @@ QFrame[class="app-frames"]{
     border-radius: 10px;
 }
 
-/* Left Frame (File Selection, Key Entry, Buttons) */
 #gui_frame {
     border: 1px solid #555;
     max-width : 500px;
@@ -112,15 +111,6 @@ QLabel[class="info-labels"]{
     max-height : 30px;
 }
 
-.note-label {
-    background-color : #1a1a1a;
-    color : yellow;
-    padding : 0px;
-    margin : 0px;
-    font-size : 14px;
-    max-height : 40px;
-}
-
 .header {
     color : white;
     font-size : 18px;
@@ -128,6 +118,21 @@ QLabel[class="info-labels"]{
     margin : 0px;
     padding : 0px;
     max-height : 30px;
+}
+
+#progress-bar {
+    border: 1px solid #008c03;
+    border-radius: 5px;
+    background-color: #1a1a1a;
+    text-align: center;
+    text-shadow: 1px 1px 2px black;
+    color: white;
+    font-weight: bold;
+}
+
+#progress-bar::chunk {
+    background-color: #008c03;
+    border-radius: 3px;
 }
 
 #rsa-radio-layout {
@@ -140,13 +145,5 @@ QScrollArea {
 }
 
 QPushButton:disabled {
-    background-color: #7a7a7a;
-}
-
-/* QScrollArea * QScrollBar:vertical {
-    background-color : #1a1a1a;
-    border-color: black;
-    border-width: 1px;
-    border-style: solid;
-    border-radius: 15px;
+    background-color: #303030;
 }

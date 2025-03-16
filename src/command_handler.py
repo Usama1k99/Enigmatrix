@@ -7,8 +7,9 @@ import shlex
 import utils
 import key_utils
 import encryptor
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtWidgets import QApplication
+from parallel_worker import *
 from command_configs import *
 from cfg import *
 
@@ -32,19 +33,26 @@ def eval_node(node):
             return SAFE_OPERATORS[op_type](eval_node(node.operand))
     raise ValueError("Invalid operation")
 
-def command(name=None, aliases=None):
+def command(name=None, aliases=None, add_prompt=True):
     """Decorator to register a command with optional aliases."""
     aliases = [] if not aliases else aliases
     def decorator(func):
         cmd_name = name if name else func.__name__
         aliases.append(cmd_name)
         aliases.append(func.__name__) if func.__name__ not in aliases else None
+        def wrapper(*args, **kwargs):
+            """Wrapper to execute the command and auto-add prompt if required."""
+            result = func(*args, **kwargs)
+            app = args[0]  # First argument is always `app`
+            if add_prompt:
+                app.retro_terminal.type_text(app.retro_terminal.prompt)
+            return result
         for alias in aliases:
             if alias in COMMANDS.keys():
                 raise ValueError(f"Command '{alias}' already exists.")
-            COMMANDS[alias] = func
+            COMMANDS[alias] = wrapper
             COMMAND_ALIASES[alias] = cmd_name
-        return func
+        return wrapper
     return decorator
 
 def execute_command(input_text, app):
@@ -60,26 +68,33 @@ def execute_command(input_text, app):
                 return terminal.confirmed(False)
             return
         else:
-            return terminal.type_text("Invalid Response.")
+            return terminal.type_text("Invalid Response.",add_prompt=True)
     try:
         result = safe_eval(input_text)
         if result is not None:
-            return app.retro_terminal.type_text(result)
+            return app.retro_terminal.type_text(result,add_prompt=True)
     except :
         pass
     # Handling commands which require full text
     if cmdl in ["echo", "print", "say"]:
         text = input_text[len(cmdl):].strip()
-        return app.retro_terminal.type_text(text)
+        rtext = ""
+        try:
+            rtext = safe_eval(text)
+            if rtext is not None:
+                pass
+        except:
+            rtext = text
+        return app.retro_terminal.type_text(rtext,add_prompt=True)
     if input_text.startswith("#"):
-        return
+        return terminal.type_text(add_prompt=True)
     kwargs = utils.normalize_kwargs(kwargs)
     if cmdl in COMMANDS:
         app.retro_terminal.setReadOnly(True)
         COMMANDS[cmdl](app, *args, **kwargs)
         app.retro_terminal.setReadOnly(False)
     else:
-        app.retro_terminal.type_text(f"Unknown command : \"{command}\"")
+        app.retro_terminal.type_text(f"Unknown command : \"{command}\"",add_prompt=True)
 
 def parse_command(command: str):
     tokens = shlex.split(command.replace("\\", "\\\\"))
@@ -125,12 +140,32 @@ def show_help(app, topic=None,*args,**kwargs):
         commands = ""
         for cmd in COMMAND_CATEGORIES[topic]:
             commands += f"> {cmd}\n"
+        commands = commands[:-1] # Removing extra newline
         return app.retro_terminal.type_text(f"{topic.capitalize()} commands:\n{commands}")
     return app.retro_terminal.type_text(help_text)
 
+@command(name="aliases",aliases=["alias"])
+def show_aliases(app,cmd_name=None,*args,**kwargs):
+    """Shows all the aliases for the given command name"""
+    if not cmd_name:
+        return show_help(app,"aliases")
+    cmd_name = cmd_name.lower()
+    if cmd_name in COMMAND_ALIASES.keys():
+        cname = COMMAND_ALIASES.get(cmd_name)
+        aliases = [k for k in COMMAND_ALIASES.keys() if COMMAND_ALIASES.get(k)==cname]
+        formatted_text = " | ".join(aliases)
+        return app.retro_terminal.type_text(f"Aliases for {cmd_name} : {formatted_text}")
+    else:
+        echo_cmds = ["echo","print","say"]
+        if cmd_name in echo_cmds:
+            formatted_text = " | ".join(echo_cmds)
+            return app.retro_terminal.type_text(f"Aliases for {cmd_name} : {formatted_text}")
+        else:
+            return app.retro_terminal.type_text(f"Invalid command name \"{cmd_name}\"")
 
 @command(name="encrypt",aliases=["enc"])
 def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*args,**kwargs):
+    config = utils.load_config()
     inp = input_file if input_file else None
     out = output_file if output_file else None
     key = raw_key if raw_key else None
@@ -160,6 +195,7 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
             return app.retro_terminal.type_text("Your RSA directory does not exists, please select RSA directory again.")
         rsa = os.path.abspath(os.path.join(rsa_dir, rsa))
         if not os.path.exists(rsa):
+            app.load_rsa_keys(tprint=False)
             return app.retro_terminal.type_text(f"Error: No such file exists: \"{rsa}\"")
     # Handling crucial conditions
     if inp == out:
@@ -172,18 +208,25 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
     file_size,_,lcs = utils.file_info(inp)
     readable_size = utils.readable_size(file_size)
     est_size = utils.readable_size(utils.estimate_encrypted_size(file_size))
+    bm_time = config.get("benchmark_time")
+    if not bm_time:
+        return app.retro_terminal.type_text("You have to run \"benchmark\" before running encryption or decryption command")
+    est_time = utils.estimate_encryption_time(file_size,bm_time)
+    app.est_op_time = est_time
+    msg_ini = "Starting encryption process..."
     if rsa:
         if not key_utils.detect_rsa_key(rsa) == "public":
             return app.retro_terminal.type_text(f"Error: Selected RSA key is not public \"{rsa}\"")
         # RSA key is public. proceed for operation
         public_key = key_utils.load_rsa_key(rsa)
         cb_args = (inp,out,key,public_key)
-        msg = f"Successfully Encrypted:\n \"{inp}\"\nSaved at:\n\"{out}\"\nUsing\n\"{rsa}\""
-        app.retro_terminal.set_pending_state(encryptor.encrypt_file,cb_args,msg)
+        msg_fin = f"Successfully Encrypted:\n \"{inp}\"\nSaved at:\n\"{out}\"\nUsing\n\"{rsa}\""
+        app.retro_terminal.set_pending_state(encryptor.encrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
                                             f"Input:\n\"{inp}\"\n"
                                             f"File size: {readable_size}\n"
                                             f"Estimated size after encryption: {est_size}\n"
+                                            f"Estimated time for operation : {est_time} seconds\n"
                                             f"Output:\n\"{out}\"\n"
                                             f"Key:\n\"{rkey}\"\n"
                                             f"RSA key:\n\"{rsa}\"\n"
@@ -191,20 +234,21 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
                                             f"Are you sure you want to continue with this operation? (y/n)")
     else:
         cb_args = (inp,out,key)
-        msg = f"Successfully Encrypted:\n\"{inp}\"\nSaved at:\n\"{out}\""
-        app.retro_terminal.set_pending_state(encryptor.encrypt_file,cb_args,msg)
+        msg_fin = f"Successfully Encrypted:\n\"{inp}\"\nSaved at:\n\"{out}\""
+        app.retro_terminal.set_pending_state(encryptor.encrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
                                             f"Input:\n\"{inp}\"\n"
                                             f"File size: {readable_size}\n"
                                             f"Estimated size after encryption: {est_size}\n"
+                                            f"Estimated time for operation : {est_time} seconds\n"
                                             f"Output:\n\"{out}\"\n"
                                             f"Operation : Encrypt\n"
                                             f"Are you sure you want to continue with this operation? (y/n)")
 
 
 @command(name="decrypt",aliases=["dec"])
-def decryp_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*args,**kwargs):
-
+def decrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*args,**kwargs):
+    config = utils.load_config()
     inp = input_file if input_file else None
     out = output_file if output_file else None
     key = raw_key if raw_key else None
@@ -236,6 +280,14 @@ def decryp_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*a
         return app.retro_terminal.type_text(f"Error: Selected file is not encrypted by this software, or file might be corrupted.\n"
                                             f"Choose a different file.")
     rsa_flag, rsa_enc_key, lcs = utils.read_file_header(inp)
+    file_size,*_ = utils.file_info(inp)
+    bm_time = config.get("benchmark_time")
+    if not bm_time:
+        return app.retro_terminal.type_text(
+            "You have to run \"benchmark\" before running encryption or decryption command")
+    est_time = utils.estimate_encryption_time(file_size, bm_time)
+    app.est_op_time = est_time
+    msg_ini = "Starting decryption process..."
     if rsa_flag:
         if not rsa:
             return app.retro_terminal.type_text("This file requires RSA private key to decrypt. please select the key file and try agian.")
@@ -243,18 +295,20 @@ def decryp_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*a
             return app.retro_terminal.type_text("Your RSA directory does not exists, please select RSA directory again.")
         rsa = os.path.abspath(os.path.join(rsa_dir, rsa))
         if not os.path.exists(rsa):
+            app.load_rsa_keys(tprint=False)
             return app.retro_terminal.type_text(f"Error: No such file exists: \"{rsa}\"")
         elif key_utils.detect_rsa_key(rsa) != "private":
             return app.retro_terminal.type_text(f"Error: Selected RSA key is not private \"{rsa}\"")
         # RSA key is private. proceed for operation
         private_key = key_utils.load_rsa_key(rsa)
         cb_args = (inp, out,None,private_key)
-        msg = f"Successfully Decrypted:\n \"{inp}\"\nSaved at:\n\"{out}\"\nUsing\n\"{rsa}\""
-        app.retro_terminal.set_pending_state(encryptor.decrypt_file, cb_args, msg)
+        msg_fin = f"Successfully Decrypted:\n \"{inp}\"\nSaved at:\n\"{out}\"\nUsing\n\"{rsa}\""
+        app.retro_terminal.set_pending_state(encryptor.decrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
                                             f"Input:\n\"{inp}\"\n"
                                             f"Output:\n\"{out}\"\n"
                                             f"RSA key:\n\"{rsa}\"\n"
+                                            f"Estimated time for operation : {est_time} seconds\n"
                                             f"Operation : Decrypt\n"
                                             f"Are you sure you want to continue with this operation? (y/n)")
     else:
@@ -263,16 +317,17 @@ def decryp_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*a
         rkey = key
         key = key.encode()
         cb_args = (inp, out, key)
-        msg = f"Successfully Decrypted:\n\"{inp}\"\nSaved at:\n\"{out}\""
-        app.retro_terminal.set_pending_state(encryptor.decrypt_file, cb_args, msg)
+        msg_fin = f"Successfully Decrypted:\n\"{inp}\"\nSaved at:\n\"{out}\""
+        app.retro_terminal.set_pending_state(encryptor.decrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
                                             f"Input:\n\"{inp}\"\n"
                                             f"Output:\n\"{out}\"\n"
+                                            f"Estimated time for operation : {est_time} seconds\n"
                                             f"Operation : Decrypt\n"
                                             f"Are you sure you want to continue with this operation? (y/n)")
 
 
-@command(name="clear", aliases=["cls"])
+@command(name="clear", aliases=["cls"],add_prompt=False)
 def clear(app, *args, **kwargs):
     app.retro_terminal.add_ascii_art(welcome_msg=True,clear=True,speed=250)
 
@@ -292,20 +347,22 @@ def change_cwd(app,path=None,*args,**kwargs):
         return app.retro_terminal.type_text(f"Error: No such directory \"{path}\"")
 
 @command(name="tree")
-def tree_command(app, path=".", *args, **kwargs):
+def tree_command(app, path=".",*args, **kwargs):
     """
     Displays a directory tree structure of the given path.
     Defaults to current working directory if no path is provided.
     """
     cwd = app.retro_terminal.cwd
+    depth = int(kwargs.get("depth",3))
+    depth = depth if depth>=1 else 3
     full_path = os.path.abspath(os.path.join(cwd, path))
     if not os.path.exists(full_path):
         return app.retro_terminal.type_text(f"Error: Path '{path}' does not exist.")
-    tree_output = "\n".join(utils.generate_tree(full_path))
+    tree_output = "\n".join(utils.generate_tree(full_path,depth=depth))
     app.retro_terminal.type_text(f"Showing tree for path: \"{full_path}\"")
     app.retro_terminal.type_text(f"{tree_output}")
 
-@command(name="ascii-art", aliases=["ascii","art"])
+@command(name="ascii-art", aliases=["ascii","art"],add_prompt=False)
 def ascii_art(app, *args, **kwargs):
     clear_flag = False
     if args:
@@ -395,15 +452,15 @@ def rsa_key_handle(app, *args, **kwargs):
                     all_rsa_files = utils.get_rsa_files()
                     prv_rsa_files = [x for x in all_rsa_files if x.endswith("_private.pem")]
                     existing_keys = set([x.replace("_private.pem", "") for x in prv_rsa_files])
+                    msg_ini = "Starting RSA key pair generation..."
                     if rsa_name in existing_keys:
-                        msg = f"Successfully generated RSA key pair with name \"{rsa_name}\" and overwritten the files."
-                        app.retro_terminal.set_pending_state(key_utils.generate_rsa_keypair,(rsa_name,rsa_dir),msg)
+                        msg_fin = f"Successfully generated RSA key pair with name \"{rsa_name}\" and overwritten the files."
+                        app.retro_terminal.set_pending_state(key_utils.generate_rsa_keypair,(rsa_name,rsa_dir), msg_ini, msg_fin)
                         return app.retro_terminal.type_text(f"RSA key pair with name \"{rsa_name}\" already exists. do you want to overwrite the existing file? : (y/n)")
                     else:
-                        app.retro_terminal.type_text("Generating RSA keys...")
-                        key_utils.generate_rsa_keypair(rsa_name,rsa_dir)
-                        rsa_str = app.str_rsa_files()
-                        return app.retro_terminal.type_text(f"{rsa_str}\nSuccessfully generated RSA key pair with name \"{rsa_name}\"")
+                        msg_fin = f"Successfully generated RSA key pair with name \"{rsa_name}\""
+                        app.retro_terminal.set_pending_state(key_utils.generate_rsa_keypair, (rsa_name, rsa_dir), msg_ini, msg_fin)
+                        return app.retro_terminal.exec_pending()
                 else:
                     return app.retro_terminal.type_text("You have to specify the name of the RSA key pair to be generated.")
             else:
@@ -497,32 +554,48 @@ def set_preference(app,window_mode=None,ui_mode=None,*args,**kwargs):
         app.init_preferences()
         return app.retro_terminal.type_text("Successfully saved preferences.")
 
-@command(name="benchmark", aliases=["benchm", "bmark", "bm"])
+@command(name="benchmark", aliases=["benchm", "bmark", "bm"],add_prompt=False)
 def benchmark(app, *args, **kwargs):
     """Runs an encryption benchmark using the specified number of cores."""
-    # === Step 1: Determine Number of Cores ===
-    num_cores = utils.get_default_core_count()
-    app.retro_terminal.type_text(f"Running benchmark with {num_cores} cores...")
-    # === Step 2: Generate 100MB Test File ===
-    test_file = os.path.abspath("./assets/benchmark_testfile.bin")
-    output_file = os.path.abspath("./assets/benchmark_output.enc")
-    if not os.path.exists(test_file):
-        app.retro_terminal.type_text("Generating 100MB test file...")
-        with open(test_file, "wb") as f:
-            f.write(os.urandom(100 * 1024 * 1024))  # 100MB of random data
-    app.retro_terminal.type_text(f"Starting encryption process...")
-    # === Step 3: Measure Encryption Time ===
-    start_time = time.time()
-    key = "testing@123".encode()
-    encryptor.encrypt_file(test_file,output_file,key)
-    end_time = time.time()
-    time_taken = end_time - start_time
-    app.retro_terminal.type_text(f"Benchmark completed!")
-    app.retro_terminal.type_text(f"Encryption Time: {time_taken:.4f} seconds")
-    # Cleanup
-    utils.del_file(test_file)
-    utils.del_file(output_file)
-    app.retro_terminal.type_text("Benchmark files cleaned up.")
+    def run_benchmark(signals,*args,**kwargs):
+        """Function that runs in the background thread."""
+        config = utils.load_config()
+        num_cores = utils.get_default_core_count()
+        signals.update_terminal.emit(f"Running benchmark with {num_cores} cores...")
+
+        # === Step 1: Generate 100MB Test File ===
+        test_file = os.path.abspath("./assets/benchmark_testfile.bin")
+        output_file = os.path.abspath("./assets/benchmark_output.enc")
+
+        if not os.path.exists(test_file):
+            signals.update_terminal.emit("Generating 100MB test file...")
+            with open(test_file, "wb") as f:
+                f.write(os.urandom(100 * 1024 * 1024))
+
+        signals.update_terminal.emit("Starting encryption process...")
+
+        # === Step 2: Measure Encryption Time ===
+        start_time = time.time()
+        key = "testing@123".encode()
+        encryptor.encrypt_file(test_file, output_file, key)
+        end_time = time.time()
+        time_taken = end_time - start_time
+        signals.update_terminal.emit("Benchmark completed!")
+        signals.update_terminal.emit(f"Encryption Time: {time_taken:.4f} seconds")
+        config["benchmark_time"] = round(time_taken,6)
+        utils.dump_config(config)
+
+        # Cleanup
+        utils.del_file(test_file)
+        utils.del_file(output_file)
+        signals.update_terminal.emit("Benchmark files cleaned up.")
+        signals.finished.emit()
+
+    # === Step 3: Create Worker and Start It ===
+    worker = ParallelWorker(run_benchmark)
+    app.retro_terminal.connect_worker_signals(worker)
+    QThreadPool.globalInstance().start(worker)
+
 
 @command(name="info",aliases=["showinfo","getinfo"])
 def show_info(app,*args,**kwargs):
@@ -536,19 +609,18 @@ def show_info(app,*args,**kwargs):
     if version:
         app.retro_terminal.type_text(f"Current Enigmatrix version is : {VERSION}")
 
-
 @command(name="run-as-admin", aliases=["admin", "sudo"])
 def restart_with_admin(app, *args, **kwargs):
     """Restarts Enigmatrix with admin privileges."""
-    script = sys.executable  # Path to the current Python interpreter or .exe
+    script = os.path.abspath(sys.executable)  # Path to the current Python interpreter or .exe
     params = " ".join(sys.argv)  # Preserve CLI args
-    working_dir = app.retro_terminal.cwd  # Get the directory of the script
+    working_dir = os.getcwd()  # Get the directory of the script
     if os.name == "nt":  # Windows
         if ctypes.windll.shell32.IsUserAnAdmin():
             app.retro_terminal.type_text("Already running as admin!")
             return
         # Relaunch with admin privileges
-        response = ctypes.windll.shell32.ShellExecuteW(None, "runas", script, params, working_dir, 0)
+        response = ctypes.windll.shell32.ShellExecuteW(None, "runas", script, params, working_dir, 5)
         if response > 32:
             app.retro_terminal.type_text("Restarting Enigmatrix with admin privileges...")
             time.sleep(2)
@@ -559,10 +631,10 @@ def restart_with_admin(app, *args, **kwargs):
         if os.geteuid() == 0:
             app.retro_terminal.type_text("Already running as root!")
             return
-        # Relaunch with sudo, ensuring the correct working directory
+        # Relaunch with sudo
         os.chdir(working_dir)
         os.execvp("sudo", ["sudo", script] + sys.argv)
-        sys.exit()  # Exit the current process
+        sys.exit()  # Exit the non-admin instance
 
 @command(name="exit", aliases=["close"])
 def exit_app(app, *args, **kwargs):

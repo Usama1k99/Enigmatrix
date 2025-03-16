@@ -1,12 +1,12 @@
 import os
 import sys
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QProgressBar,
     QFrame, QLabel, QLineEdit, QFileDialog, QWidget, QTextEdit, QInputDialog,
     QMessageBox, QButtonGroup, QRadioButton, QScrollArea, QGridLayout
 )
 from PyQt6.QtGui import QIcon, QTextCursor, QKeySequence
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThreadPool
 import key_utils
 from utils import (
     load_config, dump_config, save_command, load_command_history,
@@ -16,8 +16,8 @@ import time
 import utils
 import encryptor
 from command_handler import execute_command
+from parallel_worker import *
 from cfg import *
-
 
 
 class RetroTerminal(QTextEdit):
@@ -39,38 +39,69 @@ class RetroTerminal(QTextEdit):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._add_next_character)
         # Variables
+        self._is_cmd_running = False
         self.cwd = os.getcwd()
         self.is_dragging = False
-        # Load stylesheet
-        self.load_stylesheet("./qss/retro_terminal.qss")
+        self.threadpool = QThreadPool.globalInstance()
+        # Load stylesheet and set policies
+        self.load_stylesheet("qss/retro_terminal.qss")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.createContextMenu)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.update_protected_region()
 
-    def exec_pending(self):
-        callback,args,msg = self.pending_command
-        t1 = time.time()
-        try:
-            callback(*args)
-        except Exception as e:
-            self.confirmed()
-            return self.type_text(f"Error: {e.args[0]}")
-        t2 = time.time()
-        self.confirmed()
-        self.type_text(f"{msg}\n"
-                       f"Time taken for operation: {t2-t1:.6f}")
+    @property
+    def is_cmd_running(self):
+        return self._is_cmd_running
 
-    def set_pending_state(self,callback,args,msg):
+    @is_cmd_running.setter
+    def is_cmd_running(self,value):
+        self._is_cmd_running = bool(value)
+        if value:
+            self.app.disable_buttons()
+        else:
+            self.app.enable_buttons()
+
+    def exec_pending(self):
+        """Executes the pending command using a worker thread to prevent UI freezing."""
+        callback, args, msg_ini, msg_fin = self.pending_command  # Extract pending command details
+        pb = "rsa" not in msg_ini.lower()
+        def run_exec(signals):
+            """Worker function to execute the pending command."""
+            signals.update_terminal.emit(msg_ini)
+            if pb:
+                signals.start_pb.emit()
+                signals.time1.emit()
+            t1 = time.time()
+            try:
+                callback(*args)
+                if "rsa" in msg_ini.lower():
+                    signals.load_rsa.emit(False,True)
+            except Exception as e:
+                signals.update_terminal.emit(f"Error: {e.args[0]}")
+                signals.confirmed.emit(True)
+                return
+
+            t2 = time.time()
+            signals.confirmed.emit(True)
+            signals.stop_pb.emit() if pb else None
+            signals.update_terminal.emit(f"{msg_fin}\nTime taken for operation: {t2 - t1:.6f}")
+        # Create and start worker
+
+        worker = ParallelWorker(run_exec)
+        self.connect_worker_signals(worker,pb)
+        self.threadpool.start(worker)
+
+    def set_pending_state(self,callback,args,msg_ini,msg_fin):
         self.awaiting_response = True
-        self.pending_command = callback,args,msg
+        self.pending_command = callback,args,msg_ini,msg_fin
 
     def confirmed(self,confirm=True):
         self.awaiting_response = False
         self.pending_command = None
         if not confirm:
-            self.type_text("Operation cancelled.")
+            self.type_text("Operation cancelled.",add_prompt=True)
 
     def update_protected_region(self):
         """Updates the protected region to ensure past outputs are not editable."""
@@ -85,9 +116,34 @@ class RetroTerminal(QTextEdit):
                 menu.removeAction(action)
         menu.exec(self.viewport().mapToGlobal(position))
 
+    def connect_worker_signals(self, worker, pb=False):
+        """Connects worker signals to update terminal state."""
+        if pb:
+            worker.signals.time1.connect(self.app.set_t1)
+            worker.signals.time2.connect(self.app.set_t2)
+            worker.signals.start_pb.connect(self.app.start_progress_bar)
+            worker.signals.stop_pb.connect(self.app.reset_progress_bar)
+        worker.signals.command_started.connect(self.on_command_started)
+        worker.signals.command_finished.connect(self.on_command_finished)
+        worker.signals.update_terminal[str].connect(self.type_text)
+        worker.signals.update_terminal[str,bool].connect(self.type_text)
+        worker.signals.load_rsa.connect(self.app.load_rsa_keys)
+        worker.signals.confirmed.connect(self.confirmed)
+
+    def set_cmd_running(self,v):
+        self.is_cmd_running = v
+
+    def on_command_started(self):
+        """Called when a command starts execution."""
+        self.is_cmd_running = True  # Disable input
+
+    def on_command_finished(self):
+        """Called when a command finishes execution."""
+        self.is_cmd_running = False  # Re-enable input
+
     def keyPressEvent(self, event):
         """Handles keyboard input while restricting movement before the prompt."""
-        if self.isReadOnly():
+        if self.isReadOnly() or self.is_cmd_running:
             return
         cursor = self.textCursor()
         last_prompt_index = self.toPlainText().rfind(self.prompt) + len(self.prompt)
@@ -115,7 +171,7 @@ class RetroTerminal(QTextEdit):
             return
         # Prevent moving left beyond prompt
         if event.key() == Qt.Key.Key_Left:
-            if cursor.positionInBlock() <= len(self.prompt)-1:  # If before prompt, do nothing
+            if cursor.position() < self.protected_region_end - 1:  # If before prompt, do nothing
                 return
         # Allow moving right without restriction
         elif event.key() == Qt.Key.Key_Right:
@@ -132,8 +188,7 @@ class RetroTerminal(QTextEdit):
             return
         elif event.key() == Qt.Key.Key_Home:
             move_mode = QTextCursor.MoveMode.KeepAnchor if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else QTextCursor.MoveMode.MoveAnchor
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, move_mode)
-            cursor.movePosition(QTextCursor.MoveOperation.Right, move_mode, len(self.prompt) - 1)
+            cursor.setPosition(self.protected_region_end-1, move_mode)
             self.setTextCursor(cursor)
             return
 
@@ -146,6 +201,19 @@ class RetroTerminal(QTextEdit):
 
         # Prevent deleting text in the protected region
         elif event.key() == Qt.Key.Key_Backspace:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                cursor_position = cursor.position()
+                if cursor_position <= self.protected_region_end-1:
+                    return
+                prev_text = self.toPlainText()[:cursor_position]
+                last_space_index = prev_text.rfind(" ")
+                if last_space_index == -1 or last_space_index < self.protected_region_end:
+                    last_word_start = self.protected_region_end-1
+                else:
+                    last_word_start = last_space_index
+                cursor.setPosition(last_word_start, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+                return
             if cursor.hasSelection():
                 selection_start = cursor.selectionStart()
                 selection_end = cursor.selectionEnd()
@@ -195,8 +263,8 @@ class RetroTerminal(QTextEdit):
                 if last_command != self.command_history[-1]:
                     self.command_history.append(last_command)
             execute_command(last_command,self.app)
-        self.append(self.prompt)
-        self.update_protected_region()
+        else:
+            self.type_text(add_prompt=True)
 
     def show_previous_command(self):
         """Displays the previous command from history when Up Arrow is pressed."""
@@ -252,7 +320,12 @@ class RetroTerminal(QTextEdit):
     def dropEvent(self, event):
         event.ignore()  # Ignore drop event completely
 
-    def type_text(self,text,add_prompt=False):
+    def force_scroll_to_bottom(self):
+        scrollbar = self.verticalScrollBar()
+        if scrollbar.value() < scrollbar.maximum():  # Check if not already at bottom
+            scrollbar.setValue(scrollbar.maximum())
+
+    def type_text(self,text="",add_prompt=False):
         full_text = f"\n{text}"
         if add_prompt:
             full_text += self.prompt
@@ -260,6 +333,7 @@ class RetroTerminal(QTextEdit):
         self.current_text += full_text
         self.setText(self.current_text)
         self.moveCursor(QTextCursor.MoveOperation.End)
+        self.update_protected_region()
         QApplication.processEvents()
 
     def type_effect(self, text: str, typing_speed = 40, clear_before_typing: bool = False):
@@ -269,8 +343,7 @@ class RetroTerminal(QTextEdit):
         self.current_text = self.toPlainText()  # Preserve previous text
         self.full_text = f"\n{text}" + self.prompt
         self.index = 0
-        min_delay = (1 / typing_speed) * 1000  # Enforce min speed
-        delay = min_delay
+        delay = (1 / typing_speed) * 1000  # Enforce min speed
         self.setReadOnly(True)
         # Ensure previous connections are cleared to avoid stacking
         self.timer.stop()
@@ -290,6 +363,12 @@ class RetroTerminal(QTextEdit):
             self.setReadOnly(False)
             self.timer.stop()  # Stop typing effect
             self.update_protected_region()
+            config = utils.load_config()
+            bm_time = config.get("benchmark_time")
+            if not bm_time:
+                self.moveCursor(QTextCursor.MoveOperation.End)
+                self.append("benchmark")
+                self.process_command()
 
     def load_stylesheet(self, file_name):
         """Loads a QSS stylesheet from an external file."""
@@ -312,8 +391,6 @@ class EnigmatrixApp(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("Enigmatrix - the ultimate encryption tool".title())
-        self.setMinimumSize(1100, 800)
-
         # Core Operation Variables :
         self.input_path = None
         self.rsa_file = None
@@ -324,13 +401,17 @@ class EnigmatrixApp(QMainWindow):
         self.setWindowIcon(QIcon(self.icon_path))
 
         # Apply external QSS stylesheet
-        self.load_stylesheet("./qss/main_style.qss")
+        self.load_stylesheet("qss/main_style.qss")
 
         if not os.path.exists(CONFIG_FILE):
             self.init_config()
 
         # Variables
         self.t1, self.t2 = None, None
+        self.threadpool = QThreadPool.globalInstance()
+        self.est_op_time = 0
+        self.progress_timer = QTimer(self)
+        self.progress_timer.timeout.connect(self.update_progress_bar)
 
         # Central widget setup
         self.central_widget = QWidget()
@@ -341,7 +422,7 @@ class EnigmatrixApp(QMainWindow):
 
         self.gui_frame = QFrame()
         self.gui_frame.setProperty("class","app-frames")
-        self.gui_frame.setObjectName("gui_frame")  # Assign ID for styling
+        self.gui_frame.setObjectName("gui_frame")
 
         self.gui_layout = QVBoxLayout(self.gui_frame)
         self.rsa_list_layout = QVBoxLayout(self.gui_frame)
@@ -358,21 +439,23 @@ class EnigmatrixApp(QMainWindow):
         self.file_size_info = QLabel("File size : None")
         self.output_file_info = QLabel("Output file path : None")
         self.time_info = QLabel("Time taken : None")
-        self.misc_info = QLabel("Note: Larger file sizes may take more time for encryption/decryption please be patient.")
-        self.misc_info.setWordWrap(True)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("progress-bar")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.hide()
         self.file_name_info.setWordWrap(True)
         self.info_header.setProperty("class", "header")
         self.file_name_info.setProperty("class", "info-labels")
         self.file_size_info.setProperty("class", "info-labels")
         self.output_file_info.setProperty("class", "info-labels")
         self.time_info.setProperty("class", "info-labels")
-        self.misc_info.setProperty("class", "note-label")
         self.info_layout.addWidget(self.info_header, Qt.AlignmentFlag.AlignTop)
         self.info_layout.addWidget(self.file_name_info, Qt.AlignmentFlag.AlignTop)
         self.info_layout.addWidget(self.file_size_info, Qt.AlignmentFlag.AlignTop)
         self.info_layout.addWidget(self.output_file_info, Qt.AlignmentFlag.AlignTop)
         self.info_layout.addWidget(self.time_info, Qt.AlignmentFlag.AlignTop)
-        self.info_layout.addWidget(self.misc_info, Qt.AlignmentFlag.AlignTop)
+        self.info_layout.addWidget(self.progress_bar, Qt.AlignmentFlag.AlignTop)
 
         self.key_entry = QLineEdit()
         self.key_entry.setObjectName("key_entry")
@@ -495,7 +578,18 @@ class EnigmatrixApp(QMainWindow):
         self.file_size_info.setText("File size : None")
         self.output_file_info.setText("Output file path : None")
         self.time_info.setText("Time taken : None")
+        self.reset_progress_bar()
         self.retro_terminal.type_text("Reset Successful.",add_prompt=True)
+
+    def update_progress_bar(self):
+        if not self.t1 or not self.est_op_time:
+            return
+        tnow = time.time() - self.t1
+        progress = (tnow/self.est_op_time)*100
+        if progress>=100:
+            self.reset_progress_bar()
+        else:
+            self.progress_bar.setValue(int(progress))
 
     def show_hide(self):
         mode = self.key_entry.echoMode()
@@ -506,15 +600,65 @@ class EnigmatrixApp(QMainWindow):
             self.show_hide_btn.setText("Hide key")
             self.key_entry.setEchoMode(QLineEdit.EchoMode.Normal)
 
-    def print_time(self):
+    def stop_pb_update(self):
+        self.progress_timer.stop()
+        self.progress_bar.hide()
+        self.progress_bar.setValue(0)
+
+    def reset_progress_bar(self):
+        self.progress_bar.setValue(100)
+        self.progress_timer.stop()
+        self.est_op_time = 0
+        QTimer.singleShot(1000, self.stop_pb_update)
+
+    def display_time(self):
         self.time_info.setText(f"Time taken: {self.t2-self.t1:.6f} seconds")
+        self.reset_progress_bar()
         self.t1,self.t2 = None,None
 
     def on_rsa_key_generated(self):
-        self.retro_terminal.type_text("RSA key pair created successfully!",add_prompt=True)
-        self.print_time()
+        self.retro_terminal.type_text("RSA key pair created successfully!")
+        self.display_time()
         QMessageBox.information(self, "Success", f"RSA key pair created successfully!")
         self.load_rsa_keys(tprint=False)
+
+    def enable_buttons(self):
+        self.generate_rsa_btn.setEnabled(True)
+        self.encrypt_btn.setEnabled(True)
+        self.decrypt_btn.setEnabled(True)
+        self.reset_btn.setEnabled(True)
+
+    def disable_buttons(self):
+        self.generate_rsa_btn.setEnabled(False)
+        self.encrypt_btn.setEnabled(False)
+        self.decrypt_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+
+    def set_t1(self,):
+        self.t1 = time.time()
+
+    def set_t2(self,):
+        self.t2 = time.time()
+
+    def connect_worker_signals(self,worker,finished_cb):
+        self.retro_terminal.connect_worker_signals(worker)
+        worker.signals.msg_box.connect(self.msgBox)
+        worker.signals.time1.connect(self.set_t1)
+        worker.signals.time2.connect(self.set_t2)
+        worker.signals.finished.connect(finished_cb)
+
+    def msgBox(self,title,text):
+        QMessageBox.information(self,title,text)
+
+    def worker_wrapper(self,signals,func,cb_args,*args,**kwargs):
+        signals.time1.emit()
+        try:
+            func(*cb_args)
+        except Exception as e:
+            signals.update_terminal.emit(e.args[0])
+            return signals.msg_box.emit("Error",e.args[0])
+        signals.time2.emit()
+        signals.finished.emit()
 
     def encrypt_file(self):
         """Encrypts the selected file with the key and RSA key if selected"""
@@ -536,6 +680,11 @@ class EnigmatrixApp(QMainWindow):
             if not self.select_output_file():
                 return
 
+        file_size,*_ = utils.file_info(self.input_path)
+        bm_time = config.get("benchmark_time")
+        if not bm_time:
+            return QMessageBox.information(self,"Error",f"You have to run the benchmark command to perform encryption / decryption")
+        self.est_op_time = utils.estimate_encryption_time(file_size,bm_time)
         raw_key = raw_key.encode()
         if self.rsa_file:
             if os.path.exists(os.path.join(rsa_dir,self.rsa_file)):
@@ -543,20 +692,23 @@ class EnigmatrixApp(QMainWindow):
                     return QMessageBox.information(self, "Error",f"This is not a public key")
                 reply = QMessageBox.question(
                     self, "Confirmation",
-                    f"Input file: {self.input_path}"
-                    f"\nOutput file: {self.output_path}"
-                    f"\nRSA key: {self.rsa_file}"
-                    f"\nOperation : Encryption"
-                    f"\nAre you sure you want to continue?",
+                    f"Input file: {self.input_path}\n"
+                    f"Output file: {self.output_path}\n"
+                    f"RSA key: {self.rsa_file}\n"
+                    f"Estimated time required : {self.est_op_time} seconds\n"
+                    f"Operation : Encryption\n"
+                    f"Are you sure you want to continue?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 if reply == QMessageBox.StandardButton.No:
                     return
+                # Disable buttons here
+                self.start_progress_bar()
                 public_key = key_utils.load_rsa_key(os.path.join(rsa_dir,self.rsa_file))
-                self.t1 = time.time()
-                encryptor.encrypt_file(self.input_path,self.output_path,raw_key,public_key)
-                self.t2 = time.time()
-                self.on_encrypted()
+                cb_args = (self.input_path,self.output_path,raw_key,public_key)
+                worker = ParallelWorker(self.worker_wrapper, encryptor.encrypt_file, cb_args)
+                self.connect_worker_signals(worker,self.on_encrypted)
+                self.threadpool.start(worker)
             else:
                 self.rsa_file = None
                 self.load_rsa_keys(tprint=False)
@@ -564,22 +716,25 @@ class EnigmatrixApp(QMainWindow):
         else:
             reply = QMessageBox.question(
                 self, "Confirmation",
-                f"Input file: {self.input_path}"
-                f"\nOutput file: {self.output_path}"
-                f"\nOperation : Encryption"
-                f"\nAre you sure you want to continue?",
+                f"Input file: {self.input_path}\n"
+                f"Output file: {self.output_path}\n"
+                f"Estimated time required : {self.est_op_time} seconds\n"
+                f"Operation : Encryption\n"
+                f"Are you sure you want to continue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.No:
                 return
-            self.t1 = time.time()
-            encryptor.encrypt_file(self.input_path,self.output_path,raw_key)
-            self.t2 = time.time()
-            self.on_encrypted()
+            # Disable buttons here
+            self.start_progress_bar()
+            cb_args = (self.input_path,self.output_path,raw_key)
+            worker = ParallelWorker(self.worker_wrapper, encryptor.encrypt_file, cb_args)
+            self.connect_worker_signals(worker,self.on_encrypted)
+            self.threadpool.start(worker)
 
     def on_encrypted(self):
-        self.retro_terminal.type_text("Encryption Successful!",add_prompt=True)
-        self.print_time()
+        self.retro_terminal.type_text("Encryption Successful!")
+        self.display_time()
         QMessageBox.information(self,"Success","Encryption Successful!")
 
     def decrypt_file(self):
@@ -605,6 +760,13 @@ class EnigmatrixApp(QMainWindow):
             self.file_name_info.setText("Selected file : None")
             self.file_size_info.setText("File size : None")
             return QMessageBox.information(self,"Error","Selected file is not encrypted by this software, or file might be corrupted.\nChoose a different file.")
+
+        file_size, *_ = utils.file_info(self.input_path)
+        bm_time = config.get("benchmark_time")
+        if not bm_time:
+            return QMessageBox.information(self, "Error",
+                                           f"You have to run the benchmark command to perform encryption / decryption")
+        self.est_op_time = utils.estimate_encryption_time(file_size, bm_time)
         rsa_flag, rsa_enc_key, lcs = utils.read_file_header(self.input_path)
         if rsa_flag:
             if not self.rsa_file:
@@ -615,48 +777,54 @@ class EnigmatrixApp(QMainWindow):
                         return QMessageBox.information(self, "Error", f"This is not a private key")
                     reply = QMessageBox.question(
                         self, "Confirmation",
-                        f"Input file: {self.input_path}"
-                        f"\nOutput file: {self.output_path}"
-                        f"\nRSA key: {self.rsa_file}"
-                        f"\nOperation : Decryption"
-                        f"\nAre you sure you want to continue?",
+                        f"Input file: {self.input_path}\n"
+                        f"Output file: {self.output_path}\n"
+                        f"RSA key: {self.rsa_file}\n"
+                        f"Estimated time required : {self.est_op_time} seconds\n"
+                        f"Operation : Decryption\n"
+                        f"Are you sure you want to continue?",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                     )
                     if reply == QMessageBox.StandardButton.No:
                         return
+                    # Disable buttons here
                     priv_key = key_utils.load_rsa_key(os.path.join(rsa_dir,self.rsa_file))
-                    try:
-                        self.t1 = time.time()
-                        encryptor.decrypt_file(self.input_path, self.output_path, private_key=priv_key)
-                        self.t2 = time.time()
-                    except ValueError as e:
-                        self.retro_terminal.type_text(e.args[0],add_prompt=True)
-                        return QMessageBox.information(self, "Error", e.args[0])
-                    self.on_decrypted()
+                    self.start_progress_bar()
+                    cb_args = (self.input_path, self.output_path, None, priv_key)
+                    worker = ParallelWorker(self.worker_wrapper, encryptor.decrypt_file, cb_args)
+                    self.connect_worker_signals(worker,self.on_decrypted)
+                    self.threadpool.start(worker)
                 else:
                     return QMessageBox.information(self,"Error","Selected RSA file does not exist!")
         else:
             raw_key = raw_key.encode()
             reply = QMessageBox.question(
                 self, "Confirmation",
-                f"Input file: {self.input_path}"
-                f"\nOutput file: {self.output_path}"
-                f"\nOperation : Decryption"
-                f"\nPlease double check your key before continuing."
-                f"\nAre you sure you want to continue?",
+                f"Input file: {self.input_path}\n"
+                f"Output file: {self.output_path}\n"
+                f"Estimated time required : {self.est_op_time} seconds\n"
+                f"Operation : Decryption\n"
+                f"Are you sure you want to continue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.No:
                 return
-            self.t1 = time.time()
-            encryptor.decrypt_file(self.input_path, self.output_path, raw_key)
-            self.t2 = time.time()
-            self.on_decrypted()
+            # Disable buttons here
+            self.start_progress_bar()
+            cb_args = (self.input_path, self.output_path, raw_key)
+            worker = ParallelWorker(self.worker_wrapper, encryptor.decrypt_file, cb_args)
+            self.connect_worker_signals(worker,self.on_decrypted)
+            self.threadpool.start(worker)
 
     def on_decrypted(self):
-        self.retro_terminal.type_text("Decryption Successful!",add_prompt=True)
-        self.print_time()
+        self.retro_terminal.type_text("Decryption Successful!")
+        self.display_time()
         QMessageBox.information(self,"Success","Decryption Successful!")
+
+    def start_progress_bar(self):
+        self.t1 = None
+        self.progress_bar.show()
+        self.progress_timer.start(500)
 
     def create_rsa_key(self):
         """Handles RSA key pair creation while checking for existing keys and preventing accidental overwrites."""
@@ -690,10 +858,10 @@ class EnigmatrixApp(QMainWindow):
             if reply == QMessageBox.StandardButton.No:
                 return  # User chose not to overwrite
         # Generate RSA key pair and save them
-        self.t1 = time.time()
-        key_utils.generate_rsa_keypair(key_name,rsa_directory)
-        self.t2 = time.time()
-        self.on_rsa_key_generated()
+        cb_args = (key_name,rsa_directory)
+        worker = ParallelWorker(self.worker_wrapper, key_utils.generate_rsa_keypair, cb_args)
+        self.connect_worker_signals(worker,self.on_rsa_key_generated)
+        self.threadpool.start(worker)
 
     def display_rsa_keys_as_radio(self, rsa_files):
         """Displays available RSA keys as radio buttons inside a scrollable area."""
@@ -745,14 +913,16 @@ class EnigmatrixApp(QMainWindow):
             if button.text() == key_name:
                 self.rsa_file = key_name
                 button.setChecked(True)
-                self.retro_terminal.type_text(f"\"{self.rsa_file}\" is selected as RSA key file.")
-                return  # Exit once found
+                return self.retro_terminal.type_text(f"\"{self.rsa_file}\" is selected as RSA key file.")
         self.retro_terminal.type_text(f"No such file in selected RSA directory \"{key_name}\"")
+
     def rsa_radio_slot(self):
         radio_btn = self.sender()
         if radio_btn.isChecked():
             self.rsa_file = radio_btn.text()
-            self.retro_terminal.type_text(f"\"{self.rsa_file}\" is selected as RSA key file.\n",add_prompt=True)
+            if not self.retro_terminal.is_cmd_running:
+                self.retro_terminal.type_text(f"\"{self.rsa_file}\" is selected as RSA key file.\n",add_prompt=True)
+
     def load_stylesheet(self, file_name):
         """Loads a QSS stylesheet from an external file."""
         try:
@@ -768,14 +938,15 @@ class EnigmatrixApp(QMainWindow):
         if dir_path:
             save_rsa_directory(dir_path)
             self.load_rsa_keys()
-            self.retro_terminal.type_text(f"Selected RSA Directory as \"{dir_path}\".",add_prompt=True)
+            if not self.retro_terminal.is_cmd_running:
+                self.retro_terminal.type_text(f"Selected RSA Directory as \"{dir_path}\".",add_prompt=True)
             return dir_path
 
     def load_rsa_keys(self,add_prompt=True,tprint=True):
         self.rsa_file = None
         rsa_files = get_rsa_files()
         self.display_rsa_keys_as_radio(rsa_files)
-        if rsa_files and tprint:
+        if rsa_files and tprint and not self.retro_terminal.is_cmd_running:
             t_text = self.str_rsa_files()
             self.retro_terminal.type_text(t_text,add_prompt=add_prompt)
 
@@ -806,8 +977,9 @@ class EnigmatrixApp(QMainWindow):
             fname = file_path.split("/")[-1]
             self.file_name_info.setText(f"Selected file : {fname}")
             self.file_size_info.setText(f"File size : {readable_size} , Estimated size after encryption : {est_size}")
-            self.retro_terminal.type_text(f"Selected file : {file_path}"
-                                          f"\nFile size : {readable_size} , Estimated Size after encryption : {est_size}",add_prompt=True)
+            if not self.retro_terminal.is_cmd_running:
+                self.retro_terminal.type_text(f"Selected file : {file_path}"
+                                              f"\nFile size : {readable_size} , Estimated Size after encryption : {est_size}",add_prompt=True)
 
     def select_output_file(self):
         file_dialog = QFileDialog()

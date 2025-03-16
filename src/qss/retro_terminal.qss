@@ -4,8 +4,7 @@
     font-family: "Courier New", consolas;
     font-size: 15px;
     border-radius: 10px;
-    selection-background-color: #0000F0;
+    selection-background-color: #005500;
     selection-color: white;
-    qproperty-cursorColor: #00FF00;  /* Makes cursor green */
     qproperty-cursorWidth: 7;  /* Makes cursor thicker */
 }

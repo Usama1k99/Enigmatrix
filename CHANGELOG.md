@@ -7,6 +7,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0] - 2025-03-16
+### Added
+- **ParallelWorker for GUI & Terminal Commands** – All heavy operations now run in background threads.
+- **Progress Bar for GUI & Terminal** – Real-time progress tracking for encryption, decryption, and benchmarks.
+- **Auto Benchmark on First Launch** – Runs `benchmark` automatically to estimate encryption time.
+- **Estimated Time Calculation** – Encryption/decryption commands now display estimated time before execution.
+- **Aliases Command** – Displays all aliases for a given command.
+
+### Changed
+- **GUI Responsiveness Improved** – GUI no longer freezes during encryption, decryption, or benchmarking.
+- **Tree Command Enhancement** – Added custom depth limit for better control.
+- **Echo Command Improvement** – Now safely evaluates expressions if provided.
+- **Help Command Improved** – Better formatting and clarity in command descriptions.
+
+### Fixed
+- **Admin Mode in Bundled `.exe`** – Now properly launches with admin privileges.
+- **Minor Bug Fixes** – Various small fixes for stability.
+
+---
 ## [1.10] - 2025-03-11
 ### Added
 - Implemented **benchmark command** (`benchmark`), allowing users to test encryption speed.
