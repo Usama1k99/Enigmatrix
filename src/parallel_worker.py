@@ -12,6 +12,10 @@ class WorkerSignals(QObject):
     time1 = pyqtSignal()
     time2 = pyqtSignal()
     load_rsa = pyqtSignal(bool,bool)
+    nblock_update = pyqtSignal(int,int)
+    p_time = pyqtSignal()
+    terminal_progress = pyqtSignal(int,int)
+    progress_update = pyqtSignal(int)
     finished = pyqtSignal()
 
 class ParallelWorker(QRunnable):

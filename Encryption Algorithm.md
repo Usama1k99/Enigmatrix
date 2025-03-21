@@ -38,10 +38,10 @@ For each encryption round:
 ## **2. Encryption Process**
 Once the subkey matrix is generated, Enigmatrix performs **multi-stage transformations** on the data matrix.
 
-> **The following are the operations performed on each 1MB chunk matrix, in a random order determined by PRNG**
+> **The following are the operations performed on each 1MB block matrix, in a random order determined by PRNG**
 
 ### **2.1 XOR Operation**
-- All the chunks of 1MB matrices and subkey matrices of equal dimension are simply XOR'ed
+- All the blocks of 1MB matrices and subkey matrices of equal dimension are simply XOR'ed
 
 ### **2.2 Modular Arithmetic Operations**
 - The subkey matrix is applied to the data matrix using **modular addition and subtraction**.
@@ -64,7 +64,7 @@ Once the subkey matrix is generated, Enigmatrix performs **multi-stage transform
 > **To obtain the original data, these operations are again performed in order determined by PRNG**
 
 The decryption process follows the **reverse sequence** of encryption:
-1. **XOR the chunk matrices using sub-key matrices**.
+1. **XOR the block matrices using sub-key matrices**.
 2. **Reverse modular arithmetic operations** (subtract if addition was applied first, and vice versa).
 3. **Apply inverse permutation using stored swap order.**
 

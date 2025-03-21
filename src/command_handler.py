@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import json
 import ctypes
 import psutil
 import shlex
@@ -117,9 +118,7 @@ def parse_command(command: str):
         i += 1
     return cmd, args, kwargs
 
-# =========================== Commands =========================== #
-@command(name="help", aliases=["h"])
-def show_help(app, topic=None,*args,**kwargs):
+def get_help_text(topic=None,*args,**kwargs):
     """Displays help information for commands and categories."""
     help_text = "Available command categories:\n"
     for category in COMMAND_CATEGORIES:
@@ -127,28 +126,35 @@ def show_help(app, topic=None,*args,**kwargs):
     help_text += 'Use "help <category>" to list commands, or "help <command>" for command details.'
     # If no topic is given, show general help
     if not topic:
-        return app.retro_terminal.type_text(help_text)
+        return help_text
     # Resolve alias to actual command name
     _topic = topic
     if topic in COMMAND_ALIASES:
         topic = COMMAND_ALIASES[topic]
     # Check if topic is a command
     if topic in COMMAND_DESCRIPTIONS:
-        return app.retro_terminal.type_text(f"{_topic}: {COMMAND_DESCRIPTIONS[topic]}")
+        return f"{_topic}: {COMMAND_DESCRIPTIONS[topic]}"
     # Check if topic is a category
     if topic in COMMAND_CATEGORIES:
         commands = ""
         for cmd in COMMAND_CATEGORIES[topic]:
             commands += f"> {cmd}\n"
         commands = commands[:-1] # Removing extra newline
-        return app.retro_terminal.type_text(f"{topic.capitalize()} commands:\n{commands}")
+        return f"{topic.capitalize()} commands:\n{commands}"
+    return help_text
+
+# =========================== Commands =========================== #
+@command(name="help", aliases=["h"])
+def show_help(app, topic=None,*args,**kwargs):
+    """Displays help information for commands and categories."""
+    help_text = get_help_text(topic)
     return app.retro_terminal.type_text(help_text)
 
 @command(name="aliases",aliases=["alias"])
 def show_aliases(app,cmd_name=None,*args,**kwargs):
     """Shows all the aliases for the given command name"""
     if not cmd_name:
-        return show_help(app,"aliases")
+        return app.retro_terminal.type_text(get_help_text("aliases"))
     cmd_name = cmd_name.lower()
     if cmd_name in COMMAND_ALIASES.keys():
         cname = COMMAND_ALIASES.get(cmd_name)
@@ -166,6 +172,9 @@ def show_aliases(app,cmd_name=None,*args,**kwargs):
 @command(name="encrypt",aliases=["enc"])
 def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*args,**kwargs):
     config = utils.load_config()
+    pref = config.get("preferences")
+    benchmarks = config.get("benchmarks")
+    cores = pref.get("cores")
     inp = input_file if input_file else None
     out = output_file if output_file else None
     key = raw_key if raw_key else None
@@ -176,8 +185,9 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
     key = kwargs.get("key") if "key" in kwargs.keys() else key
     rsa = kwargs.get("rsa") if "rsa" in kwargs.keys() else rsa
     # Check if all the required values are provided or not
-    if None in (inp,out,key):
-        return show_help(app,'encrypt')
+    _req = (inp,out,key)
+    if not all(isinstance(a, str) for a in _req):
+        return app.retro_terminal.type_text(get_help_text( 'encrypt'))
     # Normalizing paths
     cwd = app.retro_terminal.cwd
     rsa_dir = utils.load_config()['rsa_directory']
@@ -208,9 +218,9 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
     file_size,_,lcs = utils.file_info(inp)
     readable_size = utils.readable_size(file_size)
     est_size = utils.readable_size(utils.estimate_encrypted_size(file_size))
-    bm_time = config.get("benchmark_time")
+    bm_time = benchmarks.get(str(cores))
     if not bm_time:
-        return app.retro_terminal.type_text("You have to run \"benchmark\" before running encryption or decryption command")
+        return app.retro_terminal.type_text(f"You have to run the benchmark command with {cores} cores to perform encryption / decryption")
     est_time = utils.estimate_encryption_time(file_size,bm_time)
     app.est_op_time = est_time
     msg_ini = "Starting encryption process..."
@@ -219,7 +229,7 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
             return app.retro_terminal.type_text(f"Error: Selected RSA key is not public \"{rsa}\"")
         # RSA key is public. proceed for operation
         public_key = key_utils.load_rsa_key(rsa)
-        cb_args = (inp,out,key,public_key)
+        cb_args = (inp,out,key,public_key,cores)
         msg_fin = f"Successfully Encrypted:\n \"{inp}\"\nSaved at:\n\"{out}\"\nUsing\n\"{rsa}\""
         app.retro_terminal.set_pending_state(encryptor.encrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
@@ -233,7 +243,7 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
                                             f"Operation : Encrypt\n"
                                             f"Are you sure you want to continue with this operation? (y/n)")
     else:
-        cb_args = (inp,out,key)
+        cb_args = (inp,out,key,None,cores)
         msg_fin = f"Successfully Encrypted:\n\"{inp}\"\nSaved at:\n\"{out}\""
         app.retro_terminal.set_pending_state(encryptor.encrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
@@ -249,6 +259,9 @@ def encrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
 @command(name="decrypt",aliases=["dec"])
 def decrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*args,**kwargs):
     config = utils.load_config()
+    pref = config.get("preferences")
+    benchmarks = config.get("benchmarks")
+    cores = pref.get("cores")
     inp = input_file if input_file else None
     out = output_file if output_file else None
     key = raw_key if raw_key else None
@@ -259,8 +272,9 @@ def decrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
     key = kwargs.get("key") if "key" in kwargs.keys() else key
     rsa = kwargs.get("rsa") if "rsa" in kwargs.keys() else rsa
     # Check if all the required values are provided or not
-    if None in (inp, out) or (not key and not rsa):
-        return show_help(app,'decrypt')
+    _req = (inp, out)
+    if not all(isinstance(a, str) for a in _req) or (not key and not rsa):
+        return app.retro_terminal.type_text(get_help_text( 'decrypt'))
     # Normalizing paths
     cwd = app.retro_terminal.cwd
     rsa_dir = utils.load_config()['rsa_directory']
@@ -281,10 +295,9 @@ def decrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
                                             f"Choose a different file.")
     rsa_flag, rsa_enc_key, lcs = utils.read_file_header(inp)
     file_size,*_ = utils.file_info(inp)
-    bm_time = config.get("benchmark_time")
+    bm_time = benchmarks.get(str(cores))
     if not bm_time:
-        return app.retro_terminal.type_text(
-            "You have to run \"benchmark\" before running encryption or decryption command")
+        return app.retro_terminal.type_text(f"You have to run the benchmark command with {cores} cores to perform encryption / decryption")
     est_time = utils.estimate_encryption_time(file_size, bm_time)
     app.est_op_time = est_time
     msg_ini = "Starting decryption process..."
@@ -301,7 +314,7 @@ def decrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
             return app.retro_terminal.type_text(f"Error: Selected RSA key is not private \"{rsa}\"")
         # RSA key is private. proceed for operation
         private_key = key_utils.load_rsa_key(rsa)
-        cb_args = (inp, out,None,private_key)
+        cb_args = (inp, out,None,private_key,cores)
         msg_fin = f"Successfully Decrypted:\n \"{inp}\"\nSaved at:\n\"{out}\"\nUsing\n\"{rsa}\""
         app.retro_terminal.set_pending_state(encryptor.decrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
@@ -316,7 +329,7 @@ def decrypt_cmd(app,input_file=None,output_file=None,raw_key=None,rsa_key=None,*
             return app.retro_terminal.type_text(f"This file requires key for decryption. please try again and enter key using --key")
         rkey = key
         key = key.encode()
-        cb_args = (inp, out, key)
+        cb_args = (inp, out, key, None, cores)
         msg_fin = f"Successfully Decrypted:\n\"{inp}\"\nSaved at:\n\"{out}\""
         app.retro_terminal.set_pending_state(encryptor.decrypt_file, cb_args, msg_ini, msg_fin)
         return app.retro_terminal.type_text(f"Confirmation:\n"
@@ -378,7 +391,7 @@ def set_mode(app, *args, **kwargs):
     window_mode = None
     ui_mode = None
     if not (args or kwargs):
-        return show_help(app,'mode')
+        return app.retro_terminal.type_text(get_help_text('mode'))
     else:
         if args:
             temp_args = [x.lower() for x in args]
@@ -409,7 +422,7 @@ def set_mode(app, *args, **kwargs):
             window_mode = "normal" if "normal" in keys else window_mode
             window_mode = "small" if "small" in keys else window_mode
         if not (window_mode or ui_mode):
-            return show_help(app,'mode')
+            return app.retro_terminal.type_text(get_help_text('mode'))
         else:
             if window_mode == "fullscreen":
                 app.retro_terminal.type_text("Switching to fullscreen mode")
@@ -441,7 +454,7 @@ def set_mode(app, *args, **kwargs):
 @command(name="rsa-key", aliases=["rsa"])
 def rsa_key_handle(app, *args, **kwargs):
     if not kwargs:
-        return show_help(app,'rsa-key')
+        return app.retro_terminal.type_text(get_help_text('rsa-key'))
     else:
         keys = [x.lower() for x in kwargs.keys()]
         if "generate" in keys:
@@ -493,98 +506,122 @@ def rsa_key_handle(app, *args, **kwargs):
             else:
                 app.retro_terminal.type_text("Select an RSA directory first.")
 
-@command(name="set-preference",aliases=["preference","prefer"])
-def set_preference(app,window_mode=None,ui_mode=None,*args,**kwargs):
+@command(name="set-preference", aliases=["preference", "prefer"])
+def set_preference(app, window_mode=None, ui_mode=None, cores=None, *args, **kwargs):
+    """Modifies user preferences including window mode, UI mode, and core count."""
     config = utils.load_config()
     pref = config.get("preferences")
+    benchmarks = config.get("benchmarks")
     default = kwargs.get("default")
+    # Restore defaults if requested
     if default:
-        ui = "gui"
-        window = "normal"
-        app.retro_terminal.type_text(f"Setting window preference as '{window}'")
-        app.retro_terminal.type_text(f"Setting ui preference as '{ui}'")
-        pref['window_mode'] = window
-        pref['ui_mode'] = ui
-        config['preferences'] = pref
+        pref["window_mode"] = "normal"
+        pref["ui_mode"] = "gui"
+        pref["cores"] = utils.get_default_core_count()
+        app.retro_terminal.type_text("Restoring preferences to default:")
+        app.retro_terminal.type_text(f"- Window Mode: '{pref['window_mode']}'")
+        app.retro_terminal.type_text(f"- UI Mode: '{pref['ui_mode']}'")
+        app.retro_terminal.type_text(f"- Core Count: '{pref['cores']}'")
         utils.dump_config(config)
         app.init_preferences()
-        return app.retro_terminal.type_text("Successfully saved preferences to default.")
-    w_modes = ["fullscreen","maximize","normal","small"]
-    u_modes = ["terminal","gui"]
+        return app.retro_terminal.type_text("Successfully restored preferences to default.")
+    # Retrieve values from kwargs (fallback to positional args if provided)
+    window_mode = kwargs.get("window", window_mode)
+    ui_mode = kwargs.get("ui", ui_mode)
+    cores = kwargs.get("cores", cores)
+    # Define valid options
+    w_modes = {"fullscreen", "maximize", "normal", "small"}
+    u_modes = {"terminal", "gui"}
+    max_cores = os.cpu_count() or 2
+    min_cores = 2
     change_flag = False
-    if not (window_mode or ui_mode):
-        if kwargs:
-            keys = [x.lower() for x in kwargs.keys()]
-            window = kwargs.get('window')
-            ui = kwargs.get('ui')
-            w_condition = window in w_modes
-            u_condition = ui in u_modes
-            if not (u_condition or w_condition):
-                return show_help(app,'preference')
-            else:
-                if w_condition:
-                    window = window.lower()
-                    pref['window_mode'] = window
-                    app.retro_terminal.type_text(f"Setting window preference as '{window}'")
-                if u_condition:
-                    ui = ui.lower()
-                    pref['ui_mode'] = ui
-                    app.retro_terminal.type_text(f"Setting ui preference as '{ui}'")
-                config['preferences'] = pref
-                utils.dump_config(config)
-                app.init_preferences()
-                return app.retro_terminal.type_text("Successfully saved preferences.")
-        else:
-            return show_help(app,'preference')
-    else:
-        window_mode = window_mode.lower() if window_mode else window_mode
-        ui_mode = ui_mode.lower() if ui_mode else ui_mode
-        w_condition = window_mode in w_modes
-        u_condition = ui_mode in u_modes
-        if not (w_condition or u_condition):
-            return show_help(app,'preference')
-        if w_condition:
-            pref['window_mode'] = window_mode
+    bm_flag = False
+    # Validate and apply window mode
+    if window_mode:
+        window_mode = window_mode.lower()
+        if window_mode in w_modes:
+            pref["window_mode"] = window_mode
             app.retro_terminal.type_text(f"Setting window preference as '{window_mode}'")
-        if u_condition:
-            app.retro_terminal.type_text(f"Setting ui preference as '{ui_mode}'")
-            pref['ui_mode'] = ui_mode
-        config['preferences'] = pref
+            change_flag = True
+        else:
+            return app.retro_terminal.type_text(f"Invalid window mode '{window_mode}'. Valid options: {', '.join(w_modes)}")
+    # Validate and apply UI mode
+    if ui_mode:
+        ui_mode = ui_mode.lower()
+        if ui_mode in u_modes:
+            pref["ui_mode"] = ui_mode
+            app.retro_terminal.type_text(f"Setting UI preference as '{ui_mode}'")
+            change_flag = True
+        else:
+            return app.retro_terminal.type_text(f"Invalid UI mode '{ui_mode}'. Valid options: {', '.join(u_modes)}")
+    # Validate and apply core count
+    if cores:
+        try:
+            cores = int(cores)
+            if min_cores <= cores <= max_cores:
+                pref["cores"] = cores
+                app.retro_terminal.type_text(f"Setting core count as '{cores}'")
+                change_flag = True
+                bm_flag = str(cores) not in benchmarks.keys()
+            else:
+                return app.retro_terminal.type_text(f"Invalid core count '{cores}'. Must be between {min_cores} and {max_cores}.")
+        except ValueError:
+            return app.retro_terminal.type_text(f"Invalid core count '{cores}'. Must be an integer.")
+    # Apply changes if any preference was modified
+    if change_flag:
+        config["preferences"] = pref
         utils.dump_config(config)
         app.init_preferences()
-        return app.retro_terminal.type_text("Successfully saved preferences.")
+        app.retro_terminal.type_text("Successfully saved preferences.")
+        if bm_flag:
+            app.retro_terminal.type_text(f"{app.retro_terminal._prompt} benchmark {cores}",add_prompt=False)
+            app.retro_terminal.process_command()
+        return
+    # No valid arguments provided, show help
+    return app.retro_terminal.type_text(get_help_text("preference"))
 
 @command(name="benchmark", aliases=["benchm", "bmark", "bm"],add_prompt=False)
-def benchmark(app, *args, **kwargs):
+def benchmark(app, cores=None, *args, **kwargs):
     """Runs an encryption benchmark using the specified number of cores."""
+    min_cores = 1
+    max_cores = os.cpu_count()
     def run_benchmark(signals,*args,**kwargs):
         """Function that runs in the background thread."""
         config = utils.load_config()
-        num_cores = utils.get_default_core_count()
-        signals.update_terminal.emit(f"Running benchmark with {num_cores} cores...")
+        benchmarks = config["benchmarks"]
+        try:
+            ncores = int(cores) if cores else utils.get_default_core_count()
+            if min_cores <= ncores <= max_cores:
+                pass
+            else:
+                return signals.update_terminal.emit(f"Invalid core count '{ncores}'. Must be between {min_cores} and {max_cores}.")
+        except ValueError:
+            return signals.update_terminal.emit(f"Invalid core count '{ncores}'. Must be an integer.")
+        if ncores not in range(min_cores, max_cores + 1):
+            return signals.update_terminal.emit(f"Invalid cores range. ({min_cores},{max_cores})")
 
+        signals.update_terminal.emit(f"Running benchmark with {ncores} cores...")
         # === Step 1: Generate 100MB Test File ===
         test_file = os.path.abspath("./assets/benchmark_testfile.bin")
         output_file = os.path.abspath("./assets/benchmark_output.enc")
-
         if not os.path.exists(test_file):
             signals.update_terminal.emit("Generating 100MB test file...")
             with open(test_file, "wb") as f:
                 f.write(os.urandom(100 * 1024 * 1024))
-
         signals.update_terminal.emit("Starting encryption process...")
-
         # === Step 2: Measure Encryption Time ===
         start_time = time.time()
         key = "testing@123".encode()
-        encryptor.encrypt_file(test_file, output_file, key)
+        encryptor.encrypt_file(test_file, output_file, key, cores=ncores)
         end_time = time.time()
         time_taken = end_time - start_time
         signals.update_terminal.emit("Benchmark completed!")
         signals.update_terminal.emit(f"Encryption Time: {time_taken:.4f} seconds")
-        config["benchmark_time"] = round(time_taken,6)
+        benchmarks[str(ncores)] = round(time_taken,6)
+        # Sort benchmarks dictionary by numerical key order before saving
+        sorted_benchmarks = {str(k): benchmarks[str(k)] for k in sorted(map(int, benchmarks.keys()))}
+        config["benchmarks"] = sorted_benchmarks
         utils.dump_config(config)
-
         # Cleanup
         utils.del_file(test_file)
         utils.del_file(output_file)
@@ -599,15 +636,23 @@ def benchmark(app, *args, **kwargs):
 
 @command(name="info",aliases=["showinfo","getinfo"])
 def show_info(app,*args,**kwargs):
-    cores = kwargs.get("cores") or kwargs.get("core") or kwargs.get("cpus") or kwargs.get("cpu") or kwargs.get("c")
+    config = utils.load_config()
+    pref = config.get("preferences")
+    cores = kwargs.get("cores") or kwargs.get("core") or kwargs.get("cpus") or kwargs.get("cpu")
     version = kwargs.get("version") or kwargs.get("ver") or kwargs.get("v")
-    if not (cores or version):
-        return show_help(app,'info')
+    cfg = kwargs.get("config") or kwargs.get("cfg")
+    if not (cores or version or cfg):
+        return app.retro_terminal.type_text(get_help_text('info'))
     if cores:
-        c_count = utils.get_default_core_count()
-        app.retro_terminal.type_text(f"Enigmatrix encryption/decryption will use ({c_count}) cores of your cpu.")
+        cores = pref.get("cores")
+        app.retro_terminal.type_text(f"Enigmatrix encryption/decryption is using {cores} cores of your cpu.")
     if version:
         app.retro_terminal.type_text(f"Current Enigmatrix version is : {VERSION}")
+    if cfg:
+        t_config = config.copy()
+        t_config.pop("command_history",None)
+        t_config = json.dumps(t_config,indent=4)
+        app.retro_terminal.type_text(t_config)
 
 @command(name="run-as-admin", aliases=["admin", "sudo"])
 def restart_with_admin(app, *args, **kwargs):

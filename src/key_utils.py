@@ -57,11 +57,11 @@ def load_rsa_key(file_path):
 def primary_hash(raw_key):
     return hashlib.sha512(raw_key).digest()
 
-def key_expansion_stream(primary_hash, raw_key, num_chunks):
+def key_expansion_stream(primary_hash, raw_key, num_blocks):
     """Yields one 1MB subkey at a time instead of storing all at once."""
     algorithm_toggle = True
     temp_key = raw_key
-    for _ in range(num_chunks):
+    for _ in range(num_blocks):
         algorithm_name = "sha512" if algorithm_toggle else "blake2b"
         algorithm = algorithms[algorithm_name]
         # Generate initial subkey using hash of primary_hash + temp_key
@@ -78,12 +78,12 @@ def expand_subkey(initial_seed,algorithm_name):
     hashing_algorithm = algorithms[algorithm_name]
     expanded_key = bytearray()
     prev_hash = hashing_algorithm(initial_seed).digest()  # H0
-    while len(expanded_key) < CHUNK_SIZE:
+    while len(expanded_key) < BLOCK_SIZE:
         new_hash = hashing_algorithm(prev_hash).digest()  # H1, H2, ...
         xored_hash = bytes(a ^ b for a, b in zip(prev_hash, new_hash))  # XOR H(n) with H(n-1)
         expanded_key.extend(xored_hash)  # Append to the expanded key
         prev_hash = new_hash  # Update for next iteration
-    return expanded_key[:CHUNK_SIZE]  # Ensure exactly 1MB
+    return expanded_key[:BLOCK_SIZE]  # Ensure exactly 1MB
 
 def extract_prng_seeds(primary_hash):
     """Extracts two PRNG seeds by XORing sections of the hash."""

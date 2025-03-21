@@ -108,7 +108,7 @@ QLabel[class="info-labels"]{
     padding : 0px;
     margin : 0px;
     font-size : 14px;
-    max-height : 30px;
+    max-height : 40px;
 }
 
 .header {
@@ -125,7 +125,6 @@ QLabel[class="info-labels"]{
     border-radius: 5px;
     background-color: #1a1a1a;
     text-align: center;
-    text-shadow: 1px 1px 2px black;
     color: white;
     font-weight: bold;
 }

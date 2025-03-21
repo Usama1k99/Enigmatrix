@@ -72,23 +72,26 @@ class RetroTerminal(QTextEdit):
             signals.update_terminal.emit(msg_ini)
             if pb:
                 signals.start_pb.emit()
-                signals.time1.emit()
-            t1 = time.time()
+            kw = {
+                "signals" : signals
+            }
             try:
-                callback(*args)
+                if pb:
+                    callback(*args,**kw)
+                else:
+                    callback(*args)
                 if "rsa" in msg_ini.lower():
                     signals.load_rsa.emit(False,True)
             except Exception as e:
                 signals.update_terminal.emit(f"Error: {e.args[0]}")
+                signals.stop_pb.emit() if pb else None
                 signals.confirmed.emit(True)
                 return
 
-            t2 = time.time()
+            signals.update_terminal.emit(msg_fin)
+            signals.p_time.emit() if pb else None
             signals.confirmed.emit(True)
-            signals.stop_pb.emit() if pb else None
-            signals.update_terminal.emit(f"{msg_fin}\nTime taken for operation: {t2 - t1:.6f}")
         # Create and start worker
-
         worker = ParallelWorker(run_exec)
         self.connect_worker_signals(worker,pb)
         self.threadpool.start(worker)
@@ -119,19 +122,28 @@ class RetroTerminal(QTextEdit):
     def connect_worker_signals(self, worker, pb=False):
         """Connects worker signals to update terminal state."""
         if pb:
-            worker.signals.time1.connect(self.app.set_t1)
-            worker.signals.time2.connect(self.app.set_t2)
+            worker.signals.progress_update.connect(self.app.update_progress_bar)
             worker.signals.start_pb.connect(self.app.start_progress_bar)
             worker.signals.stop_pb.connect(self.app.reset_progress_bar)
+            worker.signals.terminal_progress.connect(self.terminal_progress_update)
         worker.signals.command_started.connect(self.on_command_started)
         worker.signals.command_finished.connect(self.on_command_finished)
+        worker.signals.time1.connect(self.app.set_t1)
+        worker.signals.time2.connect(self.app.set_t2)
         worker.signals.update_terminal[str].connect(self.type_text)
         worker.signals.update_terminal[str,bool].connect(self.type_text)
+        worker.signals.nblock_update.connect(self.app.update_processed_blocks)
+        worker.signals.p_time.connect(self.print_time)
         worker.signals.load_rsa.connect(self.app.load_rsa_keys)
         worker.signals.confirmed.connect(self.confirmed)
 
-    def set_cmd_running(self,v):
-        self.is_cmd_running = v
+    def terminal_progress_update(self,processed,total):
+        self.replace_current_line(f"Blocks processed : {processed}/{total}",False)
+
+    def print_time(self):
+        t1,t2 = self.app.t1, self.app.t2
+        self.type_text(f"Time taken for operation: {t2 - t1:.6f}")
+        self.app.t1, self.app.t2 = None, None
 
     def on_command_started(self):
         """Called when a command starts execution."""
@@ -283,16 +295,22 @@ class RetroTerminal(QTextEdit):
             self.history_index = len(self.command_history)  # Reset index
             self.replace_current_line("")  # Clear command line
 
-    def replace_current_line(self, command):
-        """Replaces the current command line with a command from history and moves cursor to end."""
-        # Get the current text cursor
+    def replace_current_line(self, command, prompt=True):
+        """Replaces the current command line with a command from history.
+
+        If `prompt=True`, only the text after the prompt is replaced.
+        If `prompt=False`, the entire last line (including the prompt) is replaced.
+        """
         cursor = self.textCursor()
-        # Move cursor to the start of the current block (beginning of the command)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        # Move to the start of the current line
         cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-        # Move cursor right past the prompt (`>>> `) to ensure prompt remains intact
-        for _ in range(len(self.prompt)-1):
-            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor)
-        # Select everything after the prompt and remove it
+        if prompt:
+            # Move cursor right past the prompt (`>>> `) to keep it intact
+            for _ in range(len(self.prompt) - 1):
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor)
+        else:
+            pass
         cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
         cursor.removeSelectedText()
         cursor.insertText(command)
@@ -364,10 +382,13 @@ class RetroTerminal(QTextEdit):
             self.timer.stop()  # Stop typing effect
             self.update_protected_region()
             config = utils.load_config()
-            bm_time = config.get("benchmark_time")
+            benchmarks = config.get("benchmarks")
+            prefs = config.get("preferences")
+            cores = prefs.get("cores")
+            bm_time = benchmarks.get(str(cores))
             if not bm_time:
                 self.moveCursor(QTextCursor.MoveOperation.End)
-                self.append("benchmark")
+                self.append(f"benchmark {cores}")
                 self.process_command()
 
     def load_stylesheet(self, file_name):
@@ -410,8 +431,6 @@ class EnigmatrixApp(QMainWindow):
         self.t1, self.t2 = None, None
         self.threadpool = QThreadPool.globalInstance()
         self.est_op_time = 0
-        self.progress_timer = QTimer(self)
-        self.progress_timer.timeout.connect(self.update_progress_bar)
 
         # Central widget setup
         self.central_widget = QWidget()
@@ -529,6 +548,8 @@ class EnigmatrixApp(QMainWindow):
 
     def init_preferences(self):
         config = load_config()
+        if utils.is_admin():
+            self.setWindowTitle("(Admin) Enigmatrix - the ultimate encryption tool".title())
         pref = config.get("preferences")
         window = pref.get("window_mode")
         ui = pref.get("ui_mode")
@@ -558,9 +579,11 @@ class EnigmatrixApp(QMainWindow):
         obj = {
             "rsa_directory" : None,
             "preferences" : {
+                "cores" : utils.get_default_core_count(),
                 "window_mode" : "normal",
                 "ui_mode" : "gui",
             },
+            "benchmarks" : {},
             "command_history" :[]
         }
         dump_config(obj)
@@ -581,16 +604,6 @@ class EnigmatrixApp(QMainWindow):
         self.reset_progress_bar()
         self.retro_terminal.type_text("Reset Successful.",add_prompt=True)
 
-    def update_progress_bar(self):
-        if not self.t1 or not self.est_op_time:
-            return
-        tnow = time.time() - self.t1
-        progress = (tnow/self.est_op_time)*100
-        if progress>=100:
-            self.reset_progress_bar()
-        else:
-            self.progress_bar.setValue(int(progress))
-
     def show_hide(self):
         mode = self.key_entry.echoMode()
         if mode==QLineEdit.EchoMode.Normal:
@@ -600,27 +613,34 @@ class EnigmatrixApp(QMainWindow):
             self.show_hide_btn.setText("Hide key")
             self.key_entry.setEchoMode(QLineEdit.EchoMode.Normal)
 
+    def update_processed_blocks(self, processed, total):
+        tnow = time.time() if not self.t2 else self.t2
+        if processed==total:
+            self.time_info.setText(f"Time taken : {tnow-self.t1:.6f} seconds")
+        else:
+            self.time_info.setText(f"Time elapsed : {tnow-self.t1:.6f} seconds\n"
+                               f"Blocks processed : {processed}/{total}")
+
+    def start_progress_bar(self):
+        self.progress_bar.show()
+
+    def update_progress_bar(self, progress):
+        if progress == 100:
+            self.reset_progress_bar()
+        self.progress_bar.setValue(progress)
+
     def stop_pb_update(self):
-        self.progress_timer.stop()
         self.progress_bar.hide()
         self.progress_bar.setValue(0)
 
     def reset_progress_bar(self):
         self.progress_bar.setValue(100)
-        self.progress_timer.stop()
-        self.est_op_time = 0
         QTimer.singleShot(1000, self.stop_pb_update)
 
     def display_time(self):
-        self.time_info.setText(f"Time taken: {self.t2-self.t1:.6f} seconds")
+        self.time_info.setText(f"Time taken : {self.t2-self.t1:.6f} seconds")
         self.reset_progress_bar()
         self.t1,self.t2 = None,None
-
-    def on_rsa_key_generated(self):
-        self.retro_terminal.type_text("RSA key pair created successfully!")
-        self.display_time()
-        QMessageBox.information(self, "Success", f"RSA key pair created successfully!")
-        self.load_rsa_keys(tprint=False)
 
     def enable_buttons(self):
         self.generate_rsa_btn.setEnabled(True)
@@ -645,24 +665,33 @@ class EnigmatrixApp(QMainWindow):
         worker.signals.msg_box.connect(self.msgBox)
         worker.signals.time1.connect(self.set_t1)
         worker.signals.time2.connect(self.set_t2)
+        worker.signals.progress_update.connect(self.update_progress_bar)
         worker.signals.finished.connect(finished_cb)
 
     def msgBox(self,title,text):
         QMessageBox.information(self,title,text)
 
     def worker_wrapper(self,signals,func,cb_args,*args,**kwargs):
-        signals.time1.emit()
+        kw = {
+            "signals" : signals
+        }
         try:
-            func(*cb_args)
+            if func == key_utils.generate_rsa_keypair:
+                func(*cb_args)
+            else:
+                func(*cb_args,**kw)
         except Exception as e:
             signals.update_terminal.emit(e.args[0])
+            signals.stop_pb.emit()
             return signals.msg_box.emit("Error",e.args[0])
-        signals.time2.emit()
         signals.finished.emit()
 
     def encrypt_file(self):
         """Encrypts the selected file with the key and RSA key if selected"""
         config = load_config()
+        pref = config.get("preferences")
+        benchmarks = config.get("benchmarks")
+        cores = pref.get("cores")
         rsa_dir = config.get('rsa_directory')
         if not self.input_path:
             return QMessageBox.information(self,"Error","Select a file first!")
@@ -671,19 +700,16 @@ class EnigmatrixApp(QMainWindow):
                 pass
             else:
                 return QMessageBox.information(self,"Error","Selected input file does not exist!")
-
         raw_key = self.key_entry.text()
         if len(raw_key) < MIN_KEY_LEN:
             return QMessageBox.information(self,"Error",f"Key length should be atleast {MIN_KEY_LEN} characters!")
-
         if not self.output_path:
             if not self.select_output_file():
                 return
-
         file_size,*_ = utils.file_info(self.input_path)
-        bm_time = config.get("benchmark_time")
+        bm_time = benchmarks.get(str(cores))
         if not bm_time:
-            return QMessageBox.information(self,"Error",f"You have to run the benchmark command to perform encryption / decryption")
+            return QMessageBox.information(self,"Error",f"You have to run the benchmark command with {cores} cores to perform encryption / decryption")
         self.est_op_time = utils.estimate_encryption_time(file_size,bm_time)
         raw_key = raw_key.encode()
         if self.rsa_file:
@@ -705,7 +731,7 @@ class EnigmatrixApp(QMainWindow):
                 # Disable buttons here
                 self.start_progress_bar()
                 public_key = key_utils.load_rsa_key(os.path.join(rsa_dir,self.rsa_file))
-                cb_args = (self.input_path,self.output_path,raw_key,public_key)
+                cb_args = (self.input_path,self.output_path,raw_key,public_key,cores)
                 worker = ParallelWorker(self.worker_wrapper, encryptor.encrypt_file, cb_args)
                 self.connect_worker_signals(worker,self.on_encrypted)
                 self.threadpool.start(worker)
@@ -727,7 +753,7 @@ class EnigmatrixApp(QMainWindow):
                 return
             # Disable buttons here
             self.start_progress_bar()
-            cb_args = (self.input_path,self.output_path,raw_key)
+            cb_args = (self.input_path,self.output_path,raw_key,None,cores)
             worker = ParallelWorker(self.worker_wrapper, encryptor.encrypt_file, cb_args)
             self.connect_worker_signals(worker,self.on_encrypted)
             self.threadpool.start(worker)
@@ -735,11 +761,15 @@ class EnigmatrixApp(QMainWindow):
     def on_encrypted(self):
         self.retro_terminal.type_text("Encryption Successful!")
         self.display_time()
+        self.output_path = None
         QMessageBox.information(self,"Success","Encryption Successful!")
 
     def decrypt_file(self):
         """Decrypts the selected file with the key and RSA key if selected"""
         config = load_config()
+        pref = config.get("preferences")
+        benchmarks = config.get("benchmarks")
+        cores = pref.get("cores")
         rsa_dir = config.get('rsa_directory')
         if not self.input_path:
             return QMessageBox.information(self,"Error","Select a file first!")
@@ -748,11 +778,9 @@ class EnigmatrixApp(QMainWindow):
                 pass
             else:
                 return QMessageBox.information(self,"Error","Selected input file does not exist!")
-
         if not self.output_path:
             if not self.select_output_file():
                 return
-
         raw_key = self.key_entry.text()
         enc_check = utils.check_encrypted(self.input_path)
         if not enc_check:
@@ -762,10 +790,9 @@ class EnigmatrixApp(QMainWindow):
             return QMessageBox.information(self,"Error","Selected file is not encrypted by this software, or file might be corrupted.\nChoose a different file.")
 
         file_size, *_ = utils.file_info(self.input_path)
-        bm_time = config.get("benchmark_time")
+        bm_time = benchmarks.get(str(cores))
         if not bm_time:
-            return QMessageBox.information(self, "Error",
-                                           f"You have to run the benchmark command to perform encryption / decryption")
+            return QMessageBox.information(self, "Error", f"You have to run the benchmark command with {cores} cores to perform encryption / decryption")
         self.est_op_time = utils.estimate_encryption_time(file_size, bm_time)
         rsa_flag, rsa_enc_key, lcs = utils.read_file_header(self.input_path)
         if rsa_flag:
@@ -790,7 +817,7 @@ class EnigmatrixApp(QMainWindow):
                     # Disable buttons here
                     priv_key = key_utils.load_rsa_key(os.path.join(rsa_dir,self.rsa_file))
                     self.start_progress_bar()
-                    cb_args = (self.input_path, self.output_path, None, priv_key)
+                    cb_args = (self.input_path, self.output_path, None, priv_key, cores)
                     worker = ParallelWorker(self.worker_wrapper, encryptor.decrypt_file, cb_args)
                     self.connect_worker_signals(worker,self.on_decrypted)
                     self.threadpool.start(worker)
@@ -811,7 +838,7 @@ class EnigmatrixApp(QMainWindow):
                 return
             # Disable buttons here
             self.start_progress_bar()
-            cb_args = (self.input_path, self.output_path, raw_key)
+            cb_args = (self.input_path, self.output_path, raw_key, None, cores)
             worker = ParallelWorker(self.worker_wrapper, encryptor.decrypt_file, cb_args)
             self.connect_worker_signals(worker,self.on_decrypted)
             self.threadpool.start(worker)
@@ -819,12 +846,8 @@ class EnigmatrixApp(QMainWindow):
     def on_decrypted(self):
         self.retro_terminal.type_text("Decryption Successful!")
         self.display_time()
+        self.output_path = None
         QMessageBox.information(self,"Success","Decryption Successful!")
-
-    def start_progress_bar(self):
-        self.t1 = None
-        self.progress_bar.show()
-        self.progress_timer.start(500)
 
     def create_rsa_key(self):
         """Handles RSA key pair creation while checking for existing keys and preventing accidental overwrites."""
@@ -862,6 +885,11 @@ class EnigmatrixApp(QMainWindow):
         worker = ParallelWorker(self.worker_wrapper, key_utils.generate_rsa_keypair, cb_args)
         self.connect_worker_signals(worker,self.on_rsa_key_generated)
         self.threadpool.start(worker)
+
+    def on_rsa_key_generated(self):
+        self.retro_terminal.type_text("RSA key pair created successfully!")
+        QMessageBox.information(self, "Success", f"RSA key pair created successfully!")
+        self.load_rsa_keys(tprint=False)
 
     def display_rsa_keys_as_radio(self, rsa_files):
         """Displays available RSA keys as radio buttons inside a scrollable area."""

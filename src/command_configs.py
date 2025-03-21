@@ -60,19 +60,23 @@ COMMAND_DESCRIPTIONS = {
              "--normal\n"
              "--small\n"),
     "set-preference" : ("Usage: set-preference --<category> <option>\n"
-                        "The set-preference command allows configuring UI and window preferences. It stores settings and applies them immediately and everytime Enigmatrix is launched.\n\n"
-                        "UI preferences: \n"
+                        "The set-preference command allows configuring UI, window, and performance preferences. It stores settings and applies them immediately and every time Enigmatrix is launched.\n\n"
+                        "UI Preferences:\n"
                         "--ui terminal -> Only the terminal is visible, GUI is hidden.\n"
-                        "--ui gui -> GUI panel is visible alongside the terminal\n\n"
+                        "--ui gui -> GUI panel is visible alongside the terminal.\n\n"
                         "Window Preferences:\n"
                         "--window fullscreen\n"
                         "--window maximize\n"
                         "--window normal\n"
                         "--window small\n\n"
-                        "Example usage: \n"
-                        "set-preference --ui terminal --window fullscreen\n"
-                        "Changes preference to full terminal and fullscreen mode everytime you launch Enigmatrix.\n\n"
-                        "Note: using --default will change preferences to app's default settings."),
+                        "Performance Preferences:\n"
+                        "--cores <number> -> Sets the number of CPU cores used for encryption/decryption.\n"
+                        "   Example: --cores 4 (Uses 4 CPU cores for operations)\n"
+                        "   Minimum: 2 | Maximum: Based on your system's CPU count.\n\n"
+                        "Example Usage:\n"
+                        "set-preference --ui terminal --window fullscreen --cores 4\n"
+                        "Changes preference to full terminal mode, fullscreen window, and 4 CPU cores for processing every time you launch Enigmatrix.\n\n"
+                        "Note: Using --default will reset preferences to the app's default settings."),
     "benchmark" : ("Measures encryption performance by testing encryption speed on a 100MB file.\n"
                    "Runs a performance benchmark to evaluate Enigmatrix's encryption speed. \n"
                    "The benchmark encrypts a 100MB test file and measures the total time taken.\n"
@@ -84,7 +88,8 @@ COMMAND_DESCRIPTIONS = {
                    "    - This command does not affect any user files."),
     "info" : ("Displays Enigmatrix configuration info, including CPU cores used and current version.\n"
               "--cores   -> shows the number of cores used by encryption/decryption process\n"
-              "--version -> shows the current version of Enigmatrix."),
+              "--version -> shows the current version of Enigmatrix.\n"
+              "--config  -> Displays the stored configuration settings."),
     "echo" : ("Simply prints the given text to terminal.\n"
               "try \"echo Hello, World!\""),
     "print" : ("Simply prints the given text to terminal.\n"

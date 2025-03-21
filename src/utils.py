@@ -2,6 +2,7 @@ import numpy as np
 import struct
 from cfg import *
 import os
+import ctypes
 import json
 import io
 
@@ -19,7 +20,13 @@ def dump_config(obj):
     with open(CONFIG_FILE,"w") as f:
         json.dump(obj,f,indent=4)
 
-def estimate_encryption_time(file_size, bm_time, overhead_factor=0.127):
+def is_admin():
+    if os.name == "nt":  # Windows
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    else:  # Linux/macOS
+        return os.geteuid() == 0
+
+def estimate_encryption_time(file_size, bm_time, overhead_factor=0.25):
     """Estimates encryption time with overhead adjustment."""
     file_size_mb = file_size / (1024 * 1024)
     estimated_time = (file_size_mb / 100) * bm_time * (1 + overhead_factor)
@@ -125,7 +132,7 @@ def write_file_header(file_path,lcs,rsa_enc_key):
         if rsa_flag:
             f.write(struct.pack("I", key_size))
             f.write(rsa_enc_key)
-        # Write Last Chunk Size (8 bytes)
+        # Write Last block Size (8 bytes)
         f.write(struct.pack("Q", lcs))
 
 def read_file_header(file_path):
@@ -141,50 +148,50 @@ def read_file_header(file_path):
     return rsa_flag, rsa_enc_key, lcs
 
 def file_info(file_path):
-    """Returns the file size, number of chunks, and last chunk size."""
+    """Returns the file size, number of blocks, and last block size."""
     file_size = os.path.getsize(file_path)
-    num_chunks = (file_size // CHUNK_SIZE) + (file_size % CHUNK_SIZE > 0)
-    last_chunk_size = file_size % CHUNK_SIZE
-    return file_size, num_chunks, last_chunk_size
+    num_blocks = (file_size // BLOCK_SIZE) + (file_size % BLOCK_SIZE > 0)
+    last_block_size = file_size % BLOCK_SIZE
+    return file_size, num_blocks, last_block_size
 
-def calculate_num_chunks(original_size, header_size):
-    """Calculates the number of chunks after adjusting for header size."""
+def calculate_num_blocks(original_size, header_size):
+    """Calculates the number of blocks after adjusting for header size."""
     adjusted_size = original_size - header_size
-    return (adjusted_size // CHUNK_SIZE) + (adjusted_size % CHUNK_SIZE > 0)
+    return (adjusted_size // BLOCK_SIZE) + (adjusted_size % BLOCK_SIZE > 0)
 
-def bytes_to_matrix(chunk):
-    """Converts a 1MB byte chunk into a 1024×1024 matrix."""
-    if len(chunk) != 1024 * 1024:
-        raise ValueError("Chunk size must be exactly 1MB (1024*1024 bytes)")
-    return np.frombuffer(chunk, dtype=np.uint8).reshape(1024, 1024)
+def bytes_to_matrix(block):
+    """Converts a 1MB byte block into a 1024×1024 matrix."""
+    if len(block) != 1024 * 1024:
+        raise ValueError("Block size must be exactly 1MB (1024*1024 bytes)")
+    return np.frombuffer(block, dtype=np.uint8).reshape(1024, 1024)
 
 def matrix_to_bytes(matrix):
-    """Converts a 1024×1024 matrix back into a 1MB byte chunk."""
+    """Converts a 1024×1024 matrix back into a 1MB byte block."""
     if matrix.shape != (1024, 1024):
         raise ValueError("Matrix must be exactly 1024×1024 in shape")
     return matrix.astype(np.uint8).tobytes()
 
-def truncate_chunk(chunk, original_size):
-    """Trims a chunk back to its original size using LCS from the header."""
-    return chunk[:original_size]
+def truncate_block(block, original_size):
+    """Trims a block back to its original size using LCS from the header."""
+    return block[:original_size]
 
-def pad_chunk(chunk):
-    """Pads a chunk to ensure it is exactly 1MB by adding null bytes (0x00)."""
-    padding_length = CHUNK_SIZE - len(chunk)
-    return chunk + b'\x00' * padding_length
+def pad_block(block):
+    """Pads a block to ensure it is exactly 1MB by adding null bytes (0x00)."""
+    padding_length = BLOCK_SIZE - len(block)
+    return block + b'\x00' * padding_length
 
-def read_file_in_chunks(file_path, pointer=0):
-    """Reads a file in chunks and returns a generator with buffered reading."""
+def read_file_in_blocks(file_path, pointer=0):
+    """Reads a file in blocks and returns a generator with buffered reading."""
     with open(file_path, "rb") as file:
         file.seek(pointer)
         buffered_reader = io.BufferedReader(file)
-        while chunk := buffered_reader.read(CHUNK_SIZE):
-            yield chunk
+        while block := buffered_reader.read(BLOCK_SIZE):
+            yield block
 
-def write_to_file(output_path, chunk):
-    """Writes processed chunk to a file."""
+def write_to_file(output_path, block):
+    """Writes processed block to a file."""
     with open(output_path, "ab") as file:
-        file.write(chunk)
+        file.write(block)
 
 def generate_tree(directory, prefix="", depth=3, current_level=0):
     """Recursively generates a tree structure for the given directory up to a depth limit."""

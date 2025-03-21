@@ -5,6 +5,7 @@ import random
 import gc
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import concurrent.futures
 from cfg import *
 
 
@@ -12,127 +13,194 @@ OPERATIONS = ["permutation", "xor", "modular"]
 MOD_ORDER = ["add", "sub"]
 PERMUTATION_ORDER = ["row", "column"]
 
-
-def encrypt_file(input_path, output_path, raw_key, public_key=None):
-    """Encrypts a file using multi-threading for faster processing."""
-    cores = utils.get_default_core_count()
-    # Key Expansion
+def encrypt_file(input_path, output_path, raw_key, public_key=None, cores=None, signals=None):
+    """Encrypts a file using memory-efficient multi-threading with actual progress tracking."""
+    file_size, num_blocks, last_block_size = utils.file_info(input_path)
+    if signals:
+        signals.time1.emit()
+        signals.update_terminal.emit(f"Using {cores} cpu cores.\n")
     primary_hash = key_utils.primary_hash(raw_key)
     seed1, seed2 = key_utils.extract_prng_seeds(primary_hash)
-    file_size, num_chunks, last_chunk_size = utils.file_info(input_path)
-    subkey_generator = key_utils.key_expansion_stream(primary_hash, raw_key, num_chunks)
+    subkey_generator = key_utils.key_expansion_stream(primary_hash, raw_key, num_blocks)
     subkey_lock = threading.Lock()
     def next_subkey():
         with subkey_lock:
             return next(subkey_generator)
-    # Optional RSA Encryption
     rsa_enc_key = key_utils.rsa_encrypt_key(raw_key, public_key) if public_key else None
-    utils.write_file_header(output_path, last_chunk_size, rsa_enc_key)
-    # Generate Operation Sequences
+    utils.write_file_header(output_path, last_block_size, rsa_enc_key)
     op_order = determine_operation_sequence(seed1)
     row_swaps, col_swaps, permutation_order, mod_order = determine_sub_operations(seed2)
-    def process_chunk(i, chunk):
-        """Encrypts a single chunk."""
-        chunk = utils.pad_chunk(chunk)
-        chunk_matrix = utils.bytes_to_matrix(chunk)
+    processed_blocks = 0  # Track progress
+    progress_lock = threading.Lock()  # Prevent race conditions
+    def process_block(i, block):
+        """Encrypts a single block but does NOT update progress here."""
+        block = utils.pad_block(block)
+        block_matrix = utils.bytes_to_matrix(block)
         subkey_matrix = utils.bytes_to_matrix(next_subkey())
-        # Apply Encryption Operations
         for op in op_order:
             if op == "xor":
-                chunk_matrix = apply_xor(chunk_matrix, subkey_matrix)
+                block_matrix = apply_xor(block_matrix, subkey_matrix)
             elif op == "modular":
                 for t, mod_op in enumerate(mod_order):
-                    chunk_matrix = apply_modular_operations(chunk_matrix, subkey_matrix, mod_op, t == 1)
+                    block_matrix = apply_modular_operations(block_matrix, subkey_matrix, mod_op, t == 1)
             elif op == "permutation":
-                chunk_matrix = apply_permutation(chunk_matrix, row_swaps, col_swaps, permutation_order)
-        result = utils.matrix_to_bytes(chunk_matrix)
-        # **Explicitly delete NumPy arrays after processing**
-        del chunk_matrix, subkey_matrix
+                block_matrix = apply_permutation(block_matrix, row_swaps, col_swaps, permutation_order)
+        result = utils.matrix_to_bytes(block_matrix)
+        del block_matrix, subkey_matrix
         return result
-    # Read, Encrypt, and Write in Parallel
+    # Process blocks with real-time progress tracking
     with ThreadPoolExecutor(max_workers=cores) as executor:
-        future_to_chunk = {executor.submit(process_chunk, i, chunk): i for i, chunk in enumerate(utils.read_file_in_chunks(input_path))}
-        results = {}  # Dictionary to store chunks that finish early
-        next_index = 0  # Tracks the next chunk to write
-        for future in as_completed(future_to_chunk):
-            i = future_to_chunk[future]  # Get chunk index
-            results[i] = future.result()  # Store in dictionary
-            # Write chunks in correct order as soon as possible
-            while next_index in results:
-                utils.write_to_file(output_path, results[next_index])  # Write the next chunk
-                del results[next_index]  # Free memory immediately
-                next_index += 1  # Move to the next expected chunk
-    gc.collect()
+        block_iterator = enumerate(utils.read_file_in_blocks(input_path))
+        futures = set()
+        future_to_block = {}
+        # Preload first `cores` blocks
+        for _ in range(cores):
+            try:
+                i, block = next(block_iterator)
+                future = executor.submit(process_block, i, block)
+                futures.add(future)
+                future_to_block[future] = i
+            except StopIteration:
+                break
+        next_index = 0
+        results = {}
+        while futures:
+            done, futures = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                i = future_to_block[future]
+                results[i] = future.result()
+                del future_to_block[future]
+                while next_index in results:
+                    utils.write_to_file(output_path, results[next_index])
+                    del results[next_index]
+                    next_index += 1
+                    # Update progress AFTER writing a block
+                    if signals:
+                        with progress_lock:
+                            processed_blocks += 1
+                            progress_percent = int((processed_blocks / num_blocks) * 100)
+                            if processed_blocks == num_blocks:
+                                signals.time2.emit()
+                            signals.progress_update.emit(progress_percent)
+                            signals.nblock_update.emit(processed_blocks,num_blocks)
+                            signals.terminal_progress.emit(processed_blocks,num_blocks)
+                # Submit a new block
+                try:
+                    i, block = next(block_iterator)
+                    new_future = executor.submit(process_block, i, block)
+                    futures.add(new_future)
+                    future_to_block[new_future] = i
+                except StopIteration:
+                    pass
+    gc.collect()  # Final cleanup
 
-def decrypt_file(input_path, output_path, raw_key=None, private_key=None):
-    """Decrypts a file encrypted with Kryptigma's encryption algorithm using parallel processing."""
-    cores = utils.get_default_core_count()
+def decrypt_file(input_path, output_path, raw_key=None, private_key=None, cores=None, signals=None):
+    """Decrypts a file encrypted with Enigmatrix's encryption algorithm using memory-efficient parallel processing."""
     # Overwrite output file if it exists
     with open(output_path, "wb") as f:
         pass
-    # Step 1: Read the Header (RSA flag, encrypted key, last chunk size)
-    rsa_flag, rsa_enc_key, last_chunk_size = utils.read_file_header(input_path)
+    # Step 1: Read the Header (RSA flag, encrypted key, last block size)
+    rsa_flag, rsa_enc_key, last_block_size = utils.read_file_header(input_path)
     # Step 2: Decrypt the RSA Key (if used) and retrieve raw key
     if rsa_flag:
         try:
             raw_key = key_utils.rsa_decrypt_key(rsa_enc_key, private_key)
         except ValueError:
             raise ValueError("Incorrect RSA key provided")
+    if signals:
+        signals.time1.emit()
+        signals.update_terminal.emit(f"Using {cores} cpu cores.\n")
     # Step 3: Generate Subkeys
     primary_hash = key_utils.primary_hash(raw_key)
     seed1, seed2 = key_utils.extract_prng_seeds(primary_hash)
     # Get file size and adjust for header
     file_size, *_ = utils.file_info(input_path)
     # Calculate the correct pointer position to skip the header
-    header_size = 1 + 8  # RSA flag (1 byte) + Last Chunk Size (8 bytes)
+    header_size = 1 + 8  # RSA flag (1 byte) + Last block Size (8 bytes)
     if rsa_flag:
         header_size += 4 + len(rsa_enc_key)
-    # Calculate number of chunks
-    num_chunks = utils.calculate_num_chunks(file_size, header_size)
-    subkey_generator = key_utils.key_expansion_stream(primary_hash, raw_key, num_chunks)
+    # Calculate number of blocks
+    num_blocks = utils.calculate_num_blocks(file_size, header_size)
+    subkey_generator = key_utils.key_expansion_stream(primary_hash, raw_key, num_blocks)
     subkey_lock = threading.Lock()
     def next_subkey():
         with subkey_lock:
             return next(subkey_generator)
-    # Read encrypted chunks (generator)
-    encrypted_chunks = utils.read_file_in_chunks(input_path, pointer=header_size)
     # Determine Operation Order
     op_order = determine_operation_sequence(seed1)
     row_swaps, col_swaps, permutation_order, mod_order = determine_sub_operations(seed2)
-    def process_chunk(i, chunk):
-        """Decrypts a single chunk by reversing encryption steps."""
-        chunk_matrix = utils.bytes_to_matrix(chunk)
+    processed_blocks = 0  # Track progress
+    progress_lock = threading.Lock()  # Prevent race conditions
+    def process_block(i, block):
+        """Decrypts a single block by reversing encryption steps."""
+        block_matrix = utils.bytes_to_matrix(block)
         subkey_matrix = utils.bytes_to_matrix(next_subkey())
         # Reverse Operations in the same order as encryption
         for op in reversed(op_order):
             if op == "permutation":
-                chunk_matrix = reverse_permutation(chunk_matrix, row_swaps, col_swaps, permutation_order)
+                block_matrix = reverse_permutation(block_matrix, row_swaps, col_swaps, permutation_order)
             elif op == "modular":
                 for t, mod_op in enumerate(mod_order):
-                    chunk_matrix = apply_modular_operations(chunk_matrix, subkey_matrix, mod_op, t == 0)
+                    block_matrix = apply_modular_operations(block_matrix, subkey_matrix, mod_op, t == 0)
             elif op == "xor":
-                chunk_matrix = apply_xor(chunk_matrix, subkey_matrix)
-        chunk = utils.matrix_to_bytes(chunk_matrix)
-        # Truncate Last Chunk if Needed
-        if i == num_chunks - 1:
-            chunk = utils.truncate_chunk(chunk, last_chunk_size)
-        # **Explicitly delete NumPy arrays after processing**
-        del chunk_matrix, subkey_matrix
-        return chunk
-    # Parallel Processing: Decrypt Chunks
+                block_matrix = apply_xor(block_matrix, subkey_matrix)
+        block = utils.matrix_to_bytes(block_matrix)
+        # Truncate Last block if Needed
+        if i == num_blocks - 1:
+            block = utils.truncate_block(block, last_block_size)
+        # Explicitly delete NumPy arrays after processing
+        del block_matrix, subkey_matrix
+        return block
+    # Process blocks in memory-efficient way
     with ThreadPoolExecutor(max_workers=cores) as executor:
-        future_to_chunk = {executor.submit(process_chunk, i, chunk): i for i, chunk in enumerate(encrypted_chunks)}
-        results = {}  # Store decrypted chunks that finish early
-        next_index = 0  # Tracks the next chunk to write
-        for future in as_completed(future_to_chunk):
-            i = future_to_chunk[future]  # Get chunk index
-            results[i] = future.result()  # Store decrypted chunk in dictionary
-            # Write chunks in correct order as soon as possible
-            while next_index in results:
-                utils.write_to_file(output_path, results[next_index])  # Write decrypted chunk
-                del results[next_index]  # Free memory immediately
-                next_index += 1  # Move to the next expected chunk
-    gc.collect()
+        block_iterator = enumerate(utils.read_file_in_blocks(input_path, pointer=header_size))
+        futures = set()
+        future_to_block = {}
+        # Only load as many blocks as we have cores
+        for _ in range(cores):
+            try:
+                i, block = next(block_iterator)
+                future = executor.submit(process_block, i, block)
+                futures.add(future)
+                future_to_block[future] = i
+            except StopIteration:
+                break
+        next_index = 0
+        results = {}
+        while futures:
+            # Wait for the next completed future
+            done, futures = concurrent.futures.wait(
+                futures,
+                return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            for future in done:
+                i = future_to_block[future]
+                results[i] = future.result()
+                del future_to_block[future]
+                # Write blocks in order
+                while next_index in results:
+                    utils.write_to_file(output_path, results[next_index])
+                    del results[next_index]
+                    next_index += 1
+                    # Update progress AFTER writing a block
+                    if signals:
+                        with progress_lock:
+                            processed_blocks += 1
+                            progress_percent = int((processed_blocks / num_blocks) * 100)
+                            if processed_blocks == num_blocks:
+                                signals.time2.emit()
+                            signals.progress_update.emit(progress_percent)
+                            signals.nblock_update.emit(processed_blocks,num_blocks)
+                            signals.terminal_progress.emit(processed_blocks,num_blocks)
+                # Add a new block to process
+                try:
+                    i, block = next(block_iterator)
+                    new_future = executor.submit(process_block, i, block)
+                    futures.add(new_future)
+                    future_to_block[new_future] = i
+                except StopIteration:
+                    pass  # No more blocks to process
+    gc.collect()  # Final cleanup
 
 def apply_xor(matrix, subkey):
     """Applies XOR operation between matrix and subkey using NumPy."""

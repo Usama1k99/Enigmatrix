@@ -7,6 +7,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.5] - 2025-03-22
+### Added
+- **Massive Memory Optimization for Encryption/Decryption** 
+  - Now uses a memory-efficient streaming approach, keeping RAM usage minimal regardless of file size.
+- **Improved Thread Management** 
+  - Threads dynamically load and process blocks without unnecessary memory buildup.
+- **Configuration Display in Terminal (`info --config`)**  
+  - Users can now view the stored configuration settings in a readable JSON format.
+
+### Improvements
+- Displayed (Admin) in the title bar when Enigmatrix is launched with administrative privileges.
+- **Added Block Processing Count** 
+  - Users can now see the number of processed blocks alongside the progress bar for better real-time feedback.
+- **Enhanced Help Fallback Handling**  
+  - Provides clearer guidance when a command is used incorrectly. 
+  
+### Changed
+- **Actual Progress Tracking for Encryption & Decryption** 
+  - The progress bar now updates based on real-time block processing instead of estimated time.
+- **Refactored `set-preference` Command**  
+  - Now supports setting core count (`--cores <num>`), with validation against system limits.  
+- **Help Text Updates**  
+  - Updated help descriptions to reflect new features and improvements. 
+  
+### Fixed
+- **Improved Help Command Formatting** 
+  - Enhanced text layout for better readability.  
+- **Enhanced Help Fallback Handling**
+  - Provides clearer guidance when a command is used incorrectly.  
+- **Better Parameter Handling in `encrypt` and `decrypt` Commands** – Prevents crashes when users provide `--parameter` without a value.
+  - **Crash Fix for Missing or Invalid Paths in Terminal Commands** – Ensures `os.path` does not receive `None` or `bool` values.
+
+---
 ## [2.0] - 2025-03-16
 ### Added
 - **ParallelWorker for GUI & Terminal Commands** – All heavy operations now run in background threads.

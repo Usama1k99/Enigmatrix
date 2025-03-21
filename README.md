@@ -35,8 +35,8 @@ Enigmatrix is a high-performance encryption tool designed to provide secure and 
 
 ### Encryption Process  
 1. **Key Expansion** – The user-provided key undergoes multi-stage deterministic expansion, generating **1024×1024 subkey matrices** using SHA-256, BLAKE2b, and PRNG-derived transformations.  
-2. **Chunk-Based Processing** – Files are processed in chunks, allowing parallel encryption for high efficiency.  
-3. **Cryptographic Transformations** – Each chunk undergoes **XOR operations, PRNG-driven swaps, and modular arithmetic transformations** to ensure strong encryption.  
+2. **Block-Based Processing** – Files are processed in blocks, allowing parallel encryption for high efficiency.  
+3. **Cryptographic Transformations** – Each block undergoes **XOR operations, PRNG-driven swaps, and modular arithmetic transformations** to ensure strong encryption.  
 4. **Parallel Execution** – Encryption tasks are **distributed across multiple CPU cores** using threading.  
 5. **RSA Integration (Optional)** – If an RSA public key is provided, the encryption key is further encrypted for additional security.  
 
