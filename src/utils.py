@@ -45,12 +45,11 @@ def save_rsa_directory(path):
 
 def get_rsa_directory():
     config = load_config()
-    return config.get("rsa_directory")
+    return config.get("rsa_directory","")
 
 def get_rsa_files():
     """Retrieve all `.pem` key files from the stored RSA directory."""
-    config = load_config()
-    rsa_dir = config.get("rsa_directory")
+    rsa_dir = get_rsa_directory()
     if not rsa_dir or not os.path.exists(rsa_dir):
         return []
     return [f for f in os.listdir(rsa_dir) if f.endswith(".pem")]

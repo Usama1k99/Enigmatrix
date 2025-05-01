@@ -14,7 +14,7 @@ Enigmatrix is a high-performance encryption tool designed to provide secure and 
 
 ## Installation  
 
-### Requirements  
+### Main Requirements  
 - Python 3.1x
 - PyQt6  
 - NumPy  

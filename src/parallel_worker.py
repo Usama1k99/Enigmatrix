@@ -2,7 +2,8 @@ from PyQt6.QtCore import QRunnable, pyqtSignal, QObject
 
 class WorkerSignals(QObject):
     """Defines signals available from a running worker thread."""
-    update_terminal = pyqtSignal([str],[str,bool])
+    update_terminal = pyqtSignal(str)
+    update_terminal_full = pyqtSignal(str,bool)
     command_started = pyqtSignal()
     command_finished = pyqtSignal()
     confirmed = pyqtSignal(bool)
@@ -20,8 +21,9 @@ class WorkerSignals(QObject):
 
 class ParallelWorker(QRunnable):
     """General-purpose worker for running any function in a background thread."""
-    def __init__(self, function, *args, **kwargs):
+    def __init__(self, function, terminal=False, *args, **kwargs):
         super().__init__()
+        self.terminal = terminal
         self.function = function
         self.args = args
         self.kwargs = kwargs
@@ -35,3 +37,5 @@ class ParallelWorker(QRunnable):
         finally:
             self.signals.command_finished.emit()
             self.signals.update_terminal.emit("\n>>> ")
+            if self.terminal:
+                self.signals.confirmed.emit(True)

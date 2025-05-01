@@ -106,6 +106,7 @@ SAFE_OPERATORS = {
     ast.Mult: operator.mul,
     ast.Div: operator.truediv,
     ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
     ast.BitOr: operator.or_,
     ast.BitAnd: operator.and_,
     ast.BitXor: operator.xor,
@@ -113,4 +114,5 @@ SAFE_OPERATORS = {
     ast.RShift: operator.rshift,
     ast.Invert: operator.inv,
     ast.USub: operator.neg,
+
 }

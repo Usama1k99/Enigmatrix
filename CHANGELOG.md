@@ -7,6 +7,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+
+## [2.6] - 2025-05-01
+
+### Added
+- **Overflow and Size Limit Detection in Evaluator**
+  - The terminal now gracefully handles math expressions that exceed integer size limits, displaying clear error messages for both `OverflowError` and system string conversion limits.
+- **New `test` Command for Developers**
+  - A built-in command that dumps received arguments and keyword arguments in formatted JSON—handy for debugging and inspecting command input.
+- **Internal `_pvt_empty_cmd` Command**
+  - Adds a silent, no-output command that can be triggered for UI refreshes or scripted flows requiring a terminal prompt reset.
+- **Simulated Keypress and Scroll Enforcement**
+  - The terminal now forces scroll-to-bottom more reliably using a simulated backspace keypress and cursor movement.
+
+### Improvements
+- **Better Handling of `--` Argument Parsing**
+  - Throws an error when invalid flags like `--` (without a key) are passed, improving user feedback and command input validation.
+- **Quote Handling in User Input**
+  - Detects unclosed quotes (e.g. `echo "Hello`) and returns a helpful error instead of failing silently—prevents malformed commands from breaking execution flow.
+- **Stricter Eval Protection**
+  - Reworked the `safe_eval` flow to filter out unsafe or malformed expressions more reliably, reducing edge-case crashes.
+
+### Changed
+- **Unified Terminal Update Signal**
+  - Refactored terminal signals: `update_terminal` now sends plain text, while `update_terminal_full` supports `(text, add_prompt)` format—improves flexibility across different command contexts.
+- **RSA Directory Detection Logic**
+  - Now uses a centralized function (`get_rsa_directory`) to check validity and existence of the RSA folder, removing redundant config access patterns.
+- **Parallel Worker Confirmation Handling**
+  - Workers invoked from the terminal emit a `confirmed(True)` signal after finishing, even if a prompt was not directly expected—improves consistency in UI workflows.
+
+### Fixed
+- **Terminal No Longer Leaves Cursor Mid-Text**
+  - Cursor forcefully returns to the start after updates, preventing awkward scroll lock or misplaced focus.
+- **Crash Fix for Empty or Corrupt RSA Config**
+  - Resolved issue where an unset or invalid `rsa_directory` key could cause a silent crash on app startup.
+- **Safer Command Parsing**
+  - Command parser now explicitly checks for malformed `--` flags and unterminated quotes, preventing misinterpretation or incorrect keyword arguments.
+
+---
 ## [2.5] - 2025-03-22
 ### Added
 - **Massive Memory Optimization for Encryption/Decryption** 

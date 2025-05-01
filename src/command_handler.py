@@ -14,6 +14,7 @@ from parallel_worker import *
 from command_configs import *
 from cfg import *
 
+sys.set_int_max_str_digits(10000) # todo keep or remove this
 
 def safe_eval(expr):
     """Evaluates a mathematical expression safely with arithmetic & bitwise operations."""
@@ -58,7 +59,12 @@ def command(name=None, aliases=None, add_prompt=True):
 
 def execute_command(input_text, app):
     """Parses user input and executes the corresponding function."""
-    command, args, kwargs = parse_command(input_text)
+    try:
+        command, args, kwargs = parse_command(input_text)
+    except Exception as e:
+        return app.retro_terminal.type_text(f"Error : {e}",add_prompt=True)
+    if not command:
+        return app.retro_terminal.type_text(f"Unknown command", add_prompt=True)
     cmdl = command.lower()
     terminal = app.retro_terminal
     if terminal.awaiting_response:
@@ -74,7 +80,13 @@ def execute_command(input_text, app):
         result = safe_eval(input_text)
         if result is not None:
             return app.retro_terminal.type_text(result,add_prompt=True)
-    except :
+    except ValueError as e:
+        msg = e.args[0]
+        if "Exceeds the limit" in msg:
+            return terminal.type_text("Error: Input rejected. Integer too large, exceeds system conversion limits.",add_prompt=True)
+    except OverflowError as e:
+        return terminal.type_text("Error: Calculation resulted in an integer too large to handle.",add_prompt=True)
+    except Exception:
         pass
     # Handling commands which require full text
     if cmdl in ["echo", "print", "say"]:
@@ -108,6 +120,8 @@ def parse_command(command: str):
     while i < len(tokens):
         if tokens[i].startswith("--"):
             key = tokens[i][2:]
+            if not key:
+                raise ValueError("Invalid flag syntax: '--' must be followed by an option name")
             if i + 1 < len(tokens) and not tokens[i + 1].startswith("--"):
                 kwargs[key] = tokens[i + 1]
                 i += 1
@@ -633,7 +647,6 @@ def benchmark(app, cores=None, *args, **kwargs):
     app.retro_terminal.connect_worker_signals(worker)
     QThreadPool.globalInstance().start(worker)
 
-
 @command(name="info",aliases=["showinfo","getinfo"])
 def show_info(app,*args,**kwargs):
     config = utils.load_config()
@@ -680,6 +693,19 @@ def restart_with_admin(app, *args, **kwargs):
         os.chdir(working_dir)
         os.execvp("sudo", ["sudo", script] + sys.argv)
         sys.exit()  # Exit the non-admin instance
+
+@command(name="test",aliases=["testing"])
+def test_cmd(app, *args, **kwargs):
+    if args:
+        args = json.dumps(args,indent=4)
+        app.retro_terminal.type_text(args)
+    if kwargs:
+        kwargs = json.dumps(kwargs,indent=4)
+        app.retro_terminal.type_text(kwargs)
+
+@command(add_prompt=False)
+def pvt_empty_cmd(app, *args, **kwargs):
+    app.retro_terminal.type_text("",add_prompt=False)
 
 @command(name="exit", aliases=["close"])
 def exit_app(app, *args, **kwargs):

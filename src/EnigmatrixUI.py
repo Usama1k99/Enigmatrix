@@ -5,8 +5,8 @@ from PyQt6.QtWidgets import (
     QFrame, QLabel, QLineEdit, QFileDialog, QWidget, QTextEdit, QInputDialog,
     QMessageBox, QButtonGroup, QRadioButton, QScrollArea, QGridLayout
 )
-from PyQt6.QtGui import QIcon, QTextCursor, QKeySequence
-from PyQt6.QtCore import Qt, QTimer, QThreadPool
+from PyQt6.QtGui import QIcon, QTextCursor, QKeySequence, QKeyEvent
+from PyQt6.QtCore import Qt, QTimer, QThreadPool, QEvent, QCoreApplication
 import key_utils
 from utils import (
     load_config, dump_config, save_command, load_command_history,
@@ -87,12 +87,11 @@ class RetroTerminal(QTextEdit):
                 signals.stop_pb.emit() if pb else None
                 signals.confirmed.emit(True)
                 return
-
-            signals.update_terminal.emit(msg_fin)
+            signals.update_terminal_full.emit(msg_fin,False)
             signals.p_time.emit() if pb else None
             signals.confirmed.emit(True)
         # Create and start worker
-        worker = ParallelWorker(run_exec)
+        worker = ParallelWorker(run_exec,terminal=True)
         self.connect_worker_signals(worker,pb)
         self.threadpool.start(worker)
 
@@ -103,6 +102,7 @@ class RetroTerminal(QTextEdit):
     def confirmed(self,confirm=True):
         self.awaiting_response = False
         self.pending_command = None
+        self.force_scroll_to_bottom()
         if not confirm:
             self.type_text("Operation cancelled.",add_prompt=True)
 
@@ -130,8 +130,8 @@ class RetroTerminal(QTextEdit):
         worker.signals.command_finished.connect(self.on_command_finished)
         worker.signals.time1.connect(self.app.set_t1)
         worker.signals.time2.connect(self.app.set_t2)
-        worker.signals.update_terminal[str].connect(self.type_text)
-        worker.signals.update_terminal[str,bool].connect(self.type_text)
+        worker.signals.update_terminal.connect(self.type_text)
+        worker.signals.update_terminal_full.connect(self.type_text)
         worker.signals.nblock_update.connect(self.app.update_processed_blocks)
         worker.signals.p_time.connect(self.print_time)
         worker.signals.load_rsa.connect(self.app.load_rsa_keys)
@@ -168,7 +168,6 @@ class RetroTerminal(QTextEdit):
             else:
                 self.moveCursor(QTextCursor.MoveOperation.End)
                 return
-
         if cursor.hasSelection():
             if not (cpy_flag or ctrl_flag):
                 selection_start = cursor.selectionStart()
@@ -178,7 +177,6 @@ class RetroTerminal(QTextEdit):
                     return
                 else:
                     pass
-
         if event.key() in (Qt.Key.Key_Z, Qt.Key.Key_Y, Qt.Key.Key_A, Qt.Key.Key_X) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             return
         # Prevent moving left beyond prompt
@@ -339,9 +337,17 @@ class RetroTerminal(QTextEdit):
         event.ignore()  # Ignore drop event completely
 
     def force_scroll_to_bottom(self):
+        self.simulate_keypress(Qt.Key.Key_Backspace)
         scrollbar = self.verticalScrollBar()
+        cursor = self.textCursor()
         if scrollbar.value() < scrollbar.maximum():  # Check if not already at bottom
             scrollbar.setValue(scrollbar.maximum())
+        self.moveCursor(QTextCursor.MoveOperation.Start)
+
+    def simulate_keypress(self, key):
+        """Simulates a key press event in the terminal."""
+        key_event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+        QCoreApplication.postEvent(self, key_event)
 
     def type_text(self,text="",add_prompt=False):
         full_text = f"\n{text}"
@@ -913,7 +919,10 @@ class EnigmatrixApp(QMainWindow):
         self.rsa_button_group.setExclusive(True)
 
         if not rsa_files:
-            if not load_config()['rsa_directory']:
+            rsa_dir = utils.get_rsa_directory()
+            if not rsa_dir:
+                self.rsa_list_header.setText("Select RSA directory to show files.")
+            elif not os.path.exists(rsa_dir):
                 self.rsa_list_header.setText("Select RSA directory to show files.")
             else:
                 self.rsa_list_header.setText("No RSA keys found in selected folder")
@@ -1006,8 +1015,8 @@ class EnigmatrixApp(QMainWindow):
             self.file_name_info.setText(f"Selected file : {fname}")
             self.file_size_info.setText(f"File size : {readable_size} , Estimated size after encryption : {est_size}")
             if not self.retro_terminal.is_cmd_running:
-                self.retro_terminal.type_text(f"Selected file : {file_path}"
-                                              f"\nFile size : {readable_size} , Estimated Size after encryption : {est_size}",add_prompt=True)
+                self.retro_terminal.type_text(f"Selected file : {file_path}\n"
+                                              f"File size : {readable_size} , Estimated Size after encryption : {est_size}",add_prompt=True)
 
     def select_output_file(self):
         file_dialog = QFileDialog()
