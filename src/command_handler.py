@@ -14,7 +14,7 @@ from parallel_worker import *
 from command_configs import *
 from cfg import *
 
-sys.set_int_max_str_digits(10000) # todo keep or remove this
+sys.set_int_max_str_digits(10000)
 
 def safe_eval(expr):
     """Evaluates a mathematical expression safely with arithmetic & bitwise operations."""

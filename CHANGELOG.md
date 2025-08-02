@@ -8,7 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
 
-## [2.6] - 2025-05-01
+---
+## [2.6.1] - 2025-08-02
+
+### Fixed
+
+* **GUI Crash on Encryption/Decryption Operations**
+
+  * Fixed a fatal bug where encryption and decryption via GUI buttons would crash due to mismatched `ParallelWorker` function signatures. The new worker threading model now correctly routes `signals` to wrapped functions using lambdas.
+* **RSA Key Generation Stability**
+
+  * Updated RSA key generation thread logic to align with the updated `ParallelWorker` interface, ensuring consistent behavior across GUI-triggered operations.
+
+---
+## [2.6.0] - 2025-05-01
 
 ### Added
 - **Overflow and Size Limit Detection in Evaluator**
@@ -45,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - Command parser now explicitly checks for malformed `--` flags and unterminated quotes, preventing misinterpretation or incorrect keyword arguments.
 
 ---
-## [2.5] - 2025-03-22
+## [2.5.0] - 2025-03-22
 ### Added
 - **Massive Memory Optimization for Encryption/Decryption** 
   - Now uses a memory-efficient streaming approach, keeping RAM usage minimal regardless of file size.

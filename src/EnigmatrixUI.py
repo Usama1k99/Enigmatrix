@@ -738,7 +738,7 @@ class EnigmatrixApp(QMainWindow):
                 self.start_progress_bar()
                 public_key = key_utils.load_rsa_key(os.path.join(rsa_dir,self.rsa_file))
                 cb_args = (self.input_path,self.output_path,raw_key,public_key,cores)
-                worker = ParallelWorker(self.worker_wrapper, encryptor.encrypt_file, cb_args)
+                worker = ParallelWorker(lambda signals: self.worker_wrapper(signals, encryptor.encrypt_file, cb_args))
                 self.connect_worker_signals(worker,self.on_encrypted)
                 self.threadpool.start(worker)
             else:
@@ -760,7 +760,7 @@ class EnigmatrixApp(QMainWindow):
             # Disable buttons here
             self.start_progress_bar()
             cb_args = (self.input_path,self.output_path,raw_key,None,cores)
-            worker = ParallelWorker(self.worker_wrapper, encryptor.encrypt_file, cb_args)
+            worker = ParallelWorker(lambda signals: self.worker_wrapper(signals, encryptor.encrypt_file, cb_args))
             self.connect_worker_signals(worker,self.on_encrypted)
             self.threadpool.start(worker)
 
@@ -824,7 +824,7 @@ class EnigmatrixApp(QMainWindow):
                     priv_key = key_utils.load_rsa_key(os.path.join(rsa_dir,self.rsa_file))
                     self.start_progress_bar()
                     cb_args = (self.input_path, self.output_path, None, priv_key, cores)
-                    worker = ParallelWorker(self.worker_wrapper, encryptor.decrypt_file, cb_args)
+                    worker = ParallelWorker(lambda signals: self.worker_wrapper(signals, encryptor.decrypt_file, cb_args))
                     self.connect_worker_signals(worker,self.on_decrypted)
                     self.threadpool.start(worker)
                 else:
@@ -845,7 +845,7 @@ class EnigmatrixApp(QMainWindow):
             # Disable buttons here
             self.start_progress_bar()
             cb_args = (self.input_path, self.output_path, raw_key, None, cores)
-            worker = ParallelWorker(self.worker_wrapper, encryptor.decrypt_file, cb_args)
+            worker = ParallelWorker(lambda signals: self.worker_wrapper(signals, encryptor.decrypt_file, cb_args))
             self.connect_worker_signals(worker,self.on_decrypted)
             self.threadpool.start(worker)
 
@@ -888,7 +888,7 @@ class EnigmatrixApp(QMainWindow):
                 return  # User chose not to overwrite
         # Generate RSA key pair and save them
         cb_args = (key_name,rsa_directory)
-        worker = ParallelWorker(self.worker_wrapper, key_utils.generate_rsa_keypair, cb_args)
+        worker = ParallelWorker(lambda signals: self.worker_wrapper(signals, key_utils.generate_rsa_keypair, cb_args))
         self.connect_worker_signals(worker,self.on_rsa_key_generated)
         self.threadpool.start(worker)
 
