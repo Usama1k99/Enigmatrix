@@ -7,6 +7,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+---
+## [2.7.0] - 2026-02-01
+
+### Fixed
+
+* **Deterministic Subkey Derivation for Parallel Encryption**
+  Fixed a flaw where subkeys were consumed from a shared sequential generator during multi-threaded encryption/decryption, leading to non-deterministic behavior. Subkeys are now derived deterministically from `(primary_hash, raw_key, block_index)`, making encryption and decryption thread-safe and scheduling-independent.
+
+
+* **Global PRNG State Contamination**
+  Replaced usage of the global `random` module with isolated `random.Random(seed)` instances for operation ordering and permutations, ensuring deterministic behavior.
+
+### Changed
+
+* **Key Derivation Architecture**
+  Transitioned from a stateful, sequential key-expansion stream to a stateless, index-addressable key derivation function suitable for parallel processing. Legacy sequential key-expansion utilities remain available but are no longer used in the file encryption/decryption path.
 
 ---
 ## [2.6.1] - 2025-08-02
