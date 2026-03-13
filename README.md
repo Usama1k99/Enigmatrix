@@ -54,7 +54,3 @@ Contributions are welcome! Feel free to open issues or submit pull requests to i
 
 ## License  
 This project is licensed under the [MIT License](LICENSE).  
-
----
-
-This README provides a **clean overview** while keeping details concise. Let me know if you need any changes!
